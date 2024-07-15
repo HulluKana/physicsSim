@@ -21,7 +21,6 @@ struct Ubo {
 };
 
 struct PushConstant {
-    mat4 modelMat;
     uint matIdx;
 };
 

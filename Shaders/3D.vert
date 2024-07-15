@@ -11,11 +11,10 @@ layout (location = 0) out vec3 fragPosWorld;
 layout (location = 1) out vec3 fragNormalWorld;
 
 layout(set = 0, binding = 0) uniform SceneUbo {Ubo ubo;};
-layout (push_constant) uniform Push{PushConstant push;};
 
 void main()
 {
-    const vec4 worldPosition = push.modelMat * vec4(position, 1.0);
+    const vec4 worldPosition = vec4(position, 1.0);
     gl_Position = ubo.projViewMat * worldPosition;
     fragPosWorld = worldPosition.xyz;
     fragNormalWorld = normal;
