@@ -5,7 +5,10 @@
 #include <array>
 struct RenderingResources {
     std::array<std::unique_ptr<vul::VulBuffer>, vul::VulSwapChain::MAX_FRAMES_IN_FLIGHT> ubos;
+    std::unique_ptr<vul::VulBuffer> simMeshIndexBuffer;
+    std::unique_ptr<vul::VulBuffer> simMeshVertexBuffer;
     int simsPerFrame;
+    bool simulate;
 };
 struct RenderResult {
     bool skipFrame;
@@ -16,4 +19,5 @@ struct RenderResult {
 };
 
 RenderingResources initializeRenderingStuff(const std::string &modelDir, const std::string &modelFileName, vul::Vulkano &vulkano);
+void getRenderingStuffFromObj(RenderingResources &renderingResources, const Obj &obj, vul::Vulkano &vulkano);
 RenderResult render(vul::Vulkano &vulkano, RenderingResources &renderingResources, const Obj &obj, const Energies &origEnergies);

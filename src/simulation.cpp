@@ -1,9 +1,7 @@
 #include <cstdint>
-#include <functional>
-#include <glm/geometric.hpp>
+#include <limits>
 #include <simulation.hpp>
 #include <iostream>
-#include <unordered_set>
 
 void calculateEnergies(Obj &obj)
 {
@@ -18,6 +16,33 @@ void calculateEnergies(Obj &obj)
         const double length = glm::distance(obj.pointMasses[constraint.pm1idx].pos, obj.pointMasses[constraint.pm2idx].pos);
         obj.energies.constraintEnergy += 0.5 * constraint.stiffness * length * length;
     }
+}
+
+struct Tetrahedron {
+    dvec3 x;
+    dvec3 y;
+    dvec3 z;
+    dvec3 w;
+};
+std::vector<Tetrahedron> tetralize(const std::vector<dvec3> &verts)
+{
+    // Algorithm for figuring out a half-decent regular tetrahedron that contains all vertices is from
+    // https://computergraphics.stackexchange.com/questions/10533/how-to-compute-a-bounding-tetrahedron
+    dvec3 maxPos = dvec3(std::numeric_limits<double>::min());
+    dvec3 minPos = dvec3(std::numeric_limits<double>::max());
+    for (const dvec3 &vert : verts) {
+        maxPos = glm::max(maxPos, vert);
+        minPos = glm::min(minPos, vert);
+    }
+    const dvec3 center = (maxPos + minPos) / 2.0;
+    maxPos += 2.0 * (maxPos - center);
+    minPos += 2.0 * (minPos - center);
+
+    const dvec3 x = maxPos;
+    const dvec3 y = dvec3(minPos.x, maxPos.y, minPos.z);
+    const dvec3 z = dvec3(minPos.x, minPos.y, maxPos.z);
+    const dvec3 w = dvec3(maxPos.x, minPos.y, minPos.z);
+    return {{x, y, z, w}};
 }
 
 Obj getObjFromScene(const vul::Scene &scene, const std::string &objNodeName)
@@ -43,51 +68,28 @@ Obj getObjFromScene(const vul::Scene &scene, const std::string &objNodeName)
         obj.meshVertexIdxToPointMassIdx[i] = pointMassIdx;
     }
 
-    obj.pointMasses.resize(uniqueVertexIndices.size());
-    for (size_t i = 0; i < obj.pointMasses.size(); i++) {
-        obj.pointMasses[i].pos = scene.vertices[uniqueVertexIndices[i] + obj.mesh.vertexOffset];
-        obj.pointMasses[i].vel = dvec3(0.0);
-    }
+    std::vector<dvec3> uniqueVerts(uniqueVertexIndices.size());
+    for (size_t i = 0; i < uniqueVerts.size(); i++) uniqueVerts[i] = scene.vertices[uniqueVertexIndices[i] + obj.mesh.vertexOffset];
+    std::vector<Tetrahedron> tetrahedrons = tetralize(uniqueVerts);
 
-    typedef std::pair<uint32_t, uint32_t> PmIdxPair;
-    static_assert(sizeof(PmIdxPair) == sizeof(uint64_t));
-    std::function<uint64_t(PmIdxPair)> PmIdxPairToUint64_t = [](PmIdxPair pmIdxPair) {return *reinterpret_cast<uint64_t *>(&pmIdxPair);};
-    std::function<PmIdxPair(uint64_t)> uint64_tToPmIdxPair = [](uint64_t uint64) {return *reinterpret_cast<PmIdxPair *>(&uint64);};
-    std::unordered_set<uint64_t> uniquePmIdxPairs;
+    for (const Tetrahedron &tet : tetrahedrons) {
+        const uint32_t startingIdx = obj.pointMasses.size();
+        obj.pointMasses.emplace_back(Pointmass{.pos = tet.x, .vel = dvec3(0.0)});
+        obj.pointMasses.emplace_back(Pointmass{.pos = tet.y, .vel = dvec3(0.0)});
+        obj.pointMasses.emplace_back(Pointmass{.pos = tet.z, .vel = dvec3(0.0)});
+        obj.pointMasses.emplace_back(Pointmass{.pos = tet.w, .vel = dvec3(0.0)});
 
-    assert((obj.mesh.firstIndex + obj.mesh.indexCount) % 3 == 0);
-    for (uint32_t i = obj.mesh.firstIndex; i < obj.mesh.firstIndex + obj.mesh.indexCount; i += 3) {
-        const glm::vec<3, uint32_t> triVertIndices(obj.meshVertexIdxToPointMassIdx[scene.indices[i]], obj.meshVertexIdxToPointMassIdx[scene.indices[i + 1]],
-                obj.meshVertexIdxToPointMassIdx[scene.indices[i + 2]]);
-        const dvec3 &x = obj.pointMasses[triVertIndices.x].pos;
-        const dvec3 &y = obj.pointMasses[triVertIndices.y].pos;
-        const dvec3 &z = obj.pointMasses[triVertIndices.z].pos;
-        double longestEdge = glm::max(glm::distance(x, y), glm::distance(x, z));
-        longestEdge = glm::max(longestEdge, glm::distance(y, z));
-        for (size_t j = 0; j < obj.pointMasses.size(); j++) {
-            if (glm::distance(x, obj.pointMasses[j].pos) <= longestEdge + epsilon && j != triVertIndices.x) {
-                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.x, j)));
-                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(j, triVertIndices.x)));
-            }
-            if (glm::distance(y, obj.pointMasses[j].pos) <= longestEdge + epsilon && j != triVertIndices.y) {
-                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.y, j)));
-                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(j, triVertIndices.y)));
-            }
-            if (glm::distance(z, obj.pointMasses[j].pos) <= longestEdge + epsilon && j != triVertIndices.z) {
-                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.z, j)));
-                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(j, triVertIndices.z)));
+        for (uint32_t i = 0; i < 4; i++) {
+            for (uint32_t j = 0; j < 4; j++) {
+                if (i == j) continue;
+                Constraint constraint;
+                constraint.pm1idx = startingIdx + i;
+                constraint.pm2idx = startingIdx + j;
+                constraint.length = glm::distance(obj.pointMasses[constraint.pm1idx].pos, obj.pointMasses[constraint.pm1idx].pos);
+                constraint.stiffness = 100.0;
+                obj.constraints.push_back(constraint);
             }
         }
-    }
-
-    for (uint64_t encodedPmIdxPair : uniquePmIdxPairs) {
-        PmIdxPair pmIdxPair = uint64_tToPmIdxPair(encodedPmIdxPair);
-        Constraint constraint;
-        constraint.pm1idx = pmIdxPair.first;
-        constraint.pm2idx = pmIdxPair.second;
-        constraint.length = glm::distance(obj.pointMasses[pmIdxPair.first].pos, obj.pointMasses[pmIdxPair.second].pos);
-        constraint.stiffness = 100.0;
-        obj.constraints.push_back(constraint);
     }
 
     calculateEnergies(obj);
