@@ -1,8 +1,8 @@
 #include <cstdint>
 #include <functional>
 #include <glm/geometric.hpp>
-#include <iostream>
 #include <simulation.hpp>
+#include <iostream>
 #include <unordered_set>
 
 void calculateEnergies(Obj &obj)
@@ -59,13 +59,25 @@ Obj getObjFromScene(const vul::Scene &scene, const std::string &objNodeName)
     for (uint32_t i = obj.mesh.firstIndex; i < obj.mesh.firstIndex + obj.mesh.indexCount; i += 3) {
         const glm::vec<3, uint32_t> triVertIndices(obj.meshVertexIdxToPointMassIdx[scene.indices[i]], obj.meshVertexIdxToPointMassIdx[scene.indices[i + 1]],
                 obj.meshVertexIdxToPointMassIdx[scene.indices[i + 2]]);
-        std::cout << triVertIndices.x << " " << triVertIndices.y << " " << triVertIndices.z << "\n";
-        uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.x, triVertIndices.y)));
-        uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.y, triVertIndices.x)));
-        uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.x, triVertIndices.z)));
-        uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.z, triVertIndices.x)));
-        uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.y, triVertIndices.z)));
-        uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.z, triVertIndices.y)));
+        const dvec3 &x = obj.pointMasses[triVertIndices.x].pos;
+        const dvec3 &y = obj.pointMasses[triVertIndices.y].pos;
+        const dvec3 &z = obj.pointMasses[triVertIndices.z].pos;
+        double longestEdge = glm::max(glm::distance(x, y), glm::distance(x, z));
+        longestEdge = glm::max(longestEdge, glm::distance(y, z));
+        for (size_t j = 0; j < obj.pointMasses.size(); j++) {
+            if (glm::distance(x, obj.pointMasses[j].pos) <= longestEdge + epsilon && j != triVertIndices.x) {
+                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.x, j)));
+                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(j, triVertIndices.x)));
+            }
+            if (glm::distance(y, obj.pointMasses[j].pos) <= longestEdge + epsilon && j != triVertIndices.y) {
+                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.y, j)));
+                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(j, triVertIndices.y)));
+            }
+            if (glm::distance(z, obj.pointMasses[j].pos) <= longestEdge + epsilon && j != triVertIndices.z) {
+                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(triVertIndices.z, j)));
+                uniquePmIdxPairs.insert(PmIdxPairToUint64_t(PmIdxPair(j, triVertIndices.z)));
+            }
+        }
     }
 
     for (uint64_t encodedPmIdxPair : uniquePmIdxPairs) {
@@ -74,10 +86,9 @@ Obj getObjFromScene(const vul::Scene &scene, const std::string &objNodeName)
         constraint.pm1idx = pmIdxPair.first;
         constraint.pm2idx = pmIdxPair.second;
         constraint.length = glm::distance(obj.pointMasses[pmIdxPair.first].pos, obj.pointMasses[pmIdxPair.second].pos);
-        constraint.stiffness = 1000.0;
+        constraint.stiffness = 100.0;
         obj.constraints.push_back(constraint);
     }
-    std::cout << uniqueVertexIndices.size() << ": OK   " << obj.pointMasses.size() << ": Ok   " << obj.constraints.size() << ": Seems sus, shouldn't it be like between 8*(6/2 + 3/2)*2=72 or something?\n";
 
     calculateEnergies(obj);
 

@@ -20,8 +20,12 @@ struct Ubo {
     vec4 ambientLightColor;
 };
 
-struct PushConstant {
+struct DefaultPC {
     uint matIdx;
+};
+
+struct WireframePC {
+    vec4 wireframeColor;
 };
 
 #endif

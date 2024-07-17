@@ -14,7 +14,7 @@ layout (location = 0) out vec4 FragColor;
 layout(set = 0, binding = 0) uniform SceneUbo {Ubo ubo;};
 layout(set = 0, binding = 1) readonly buffer MaterialBuffer{PackedMaterial materials[];};
 
-layout (push_constant) uniform Push{PushConstant push;};
+layout (push_constant) uniform Push{DefaultPC push;};
 
 layout (early_fragment_tests) in;
 
