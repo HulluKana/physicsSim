@@ -9,22 +9,33 @@
 typedef glm::vec<3, double> dvec3;
 struct Pointmass{
     dvec3 pos;
+    dvec3 oldPos;
     dvec3 vel;
 };
-struct Constraint {
+struct DstConstraint {
     uint32_t pm1idx;
     uint32_t pm2idx;
     double length;
-    double stiffness;
+    double inverseStiffness;
+};
+struct VolConstraint {
+    uint32_t pm1idx;
+    uint32_t pm2idx;
+    uint32_t pm3idx;
+    uint32_t pm4idx;
+    double volume;
+    double inverseStiffness;
 };
 struct Energies {
     double kineticEnergy;
     double potentialEnergy;
-    double constraintEnergy;
+    double dstConstraintEnergy;
+    double volConstraintEnergy;
 };
 struct Obj {
     std::vector<Pointmass> pointMasses;
-    std::vector<Constraint> constraints;
+    std::vector<DstConstraint> dstConstraints;
+    std::vector<VolConstraint> volConstraints;
     Energies energies;
     vul::GltfLoader::GltfPrimMesh mesh;
     std::unordered_map<uint32_t, uint32_t> meshVertexIdxToPointMassIdx;

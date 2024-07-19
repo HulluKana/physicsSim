@@ -107,7 +107,7 @@ void getRenderingStuffFromObj(RenderingResources &renderingResources, const Obj 
     std::vector<glm::vec3> simMeshVertices;
     for (const Pointmass &pm : obj.pointMasses) simMeshVertices.push_back(pm.pos);
     std::vector<uint32_t> simMeshIndices;
-    for (const Constraint &constraint : obj.constraints) {
+    for (const DstConstraint &constraint : obj.dstConstraints) {
         simMeshIndices.push_back(constraint.pm1idx);
         simMeshIndices.push_back(constraint.pm2idx);
     }
@@ -169,9 +169,9 @@ RenderResult render(vul::Vulkano &vulkano, RenderingResources &renderingResource
     ImGui::Begin("Menu");
     ImGui::Text("Fps: %lf", 1.0 / result.frameTime);
     ImGui::DragInt("Simulations per frame", &renderingResources.simsPerFrame, static_cast<float>(renderingResources.simsPerFrame) * 0.05, 1, std::numeric_limits<int>::max());
-    ImGui::Text("Potential energy: %lfJ\nKinetic energy: %lfJ\nConstraint energy: %lfJ\nTotal energy: %lfJ", obj.energies.potentialEnergy, obj.energies.kineticEnergy, obj.energies.constraintEnergy,
-            obj.energies.potentialEnergy + obj.energies.kineticEnergy + obj.energies.constraintEnergy);
-    ImGui::Text("Starting energy: %lfJ", origEnergies.potentialEnergy + origEnergies.kineticEnergy + origEnergies.constraintEnergy);
+    ImGui::Text("Potential energy: %lfJ\nKinetic energy: %lfJ\nConstraint energy: %lfJ\nVolume energy: %lfJ\nTotal energy: %lfJ", obj.energies.potentialEnergy, obj.energies.kineticEnergy,
+            obj.energies.dstConstraintEnergy, obj.energies.volConstraintEnergy, obj.energies.potentialEnergy + obj.energies.kineticEnergy + obj.energies.dstConstraintEnergy + obj.energies.volConstraintEnergy);
+    ImGui::Text("Starting energy: %lfJ", origEnergies.potentialEnergy + origEnergies.kineticEnergy + origEnergies.dstConstraintEnergy + origEnergies.volConstraintEnergy);
     ImGui::Checkbox("Draw wireframes", &vulkano.renderDatas[1].enable);
     ImGui::Checkbox("Fill triangles", &vulkano.renderDatas[0].enable);
     ImGui::Checkbox("Draw simulation mesh", &vulkano.renderDatas[2].enable);

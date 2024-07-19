@@ -10,7 +10,7 @@ int main()
     vul::Vulkano vulkano(2560, 1440, "Physics simulator");
     vul::settings::maxFps = 144.0;
     RenderingResources renderingResources = initializeRenderingStuff("../Models", "Physic sim scene.gltf", vulkano);
-    renderingResources.simsPerFrame = 1000;
+    renderingResources.simsPerFrame = 500;
     renderingResources.simulate = false;
     Obj origObj = getObjFromScene(vulkano.scene, "Cube");
     Obj obj = origObj;
