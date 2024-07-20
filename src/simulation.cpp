@@ -51,13 +51,13 @@ struct TetrahedronIndices {
     uint32_t c;
     uint32_t d;
 };
-std::vector<TetrahedronIndices> tetralize(const std::vector<dvec3> &verts, const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
+std::vector<TetrahedronIndices> tetralize(const std::vector<dvec3> &origVerts, const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
 {
     // Algorithm for figuring out a half-decent regular tetrahedron that contains all vertices is from
     // https://computergraphics.stackexchange.com/questions/10533/how-to-compute-a-bounding-tetrahedron
     dvec3 maxPos = dvec3(std::numeric_limits<double>::min());
     dvec3 minPos = dvec3(std::numeric_limits<double>::max());
-    for (const dvec3 &vert : verts) {
+    for (const dvec3 &vert : origVerts) {
         maxPos = glm::max(maxPos, vert);
         minPos = glm::min(minPos, vert);
     }
@@ -65,52 +65,75 @@ std::vector<TetrahedronIndices> tetralize(const std::vector<dvec3> &verts, const
     maxPos += 2.0 * (maxPos - center);
     minPos += 2.0 * (minPos - center);
 
-    struct Tetrahedron {
-        dvec3 a;
-        dvec3 b;
-        dvec3 c;
-        dvec3 d;
-    };
-    std::vector<Tetrahedron> tets(1);
-    tets[0].a = maxPos;
-    tets[0].b = dvec3(minPos.x, maxPos.y, minPos.z);
-    tets[0].c = dvec3(minPos.x, minPos.y, maxPos.z);
-    tets[0].d = dvec3(maxPos.x, minPos.y, minPos.z);
+    std::vector<dvec3> verts = origVerts;
+    std::vector<TetrahedronIndices> tets(1);
+    tets[0].a = verts.size();
+    tets[0].b = verts.size() + 1;
+    tets[0].c = verts.size() + 2;
+    tets[0].d = verts.size() + 3;
+    verts.push_back(maxPos);
+    verts.push_back(dvec3(minPos.x, maxPos.y, minPos.z));
+    verts.push_back(dvec3(minPos.x, minPos.y, maxPos.z));
+    verts.push_back(dvec3(maxPos.x, minPos.y, minPos.z));
 
     std::vector<size_t> tetIdxsToRemove;
-    std::vector<dvec3> removedTetCorners;
-    for (const dvec3 &vert : verts) {
+    std::unordered_set<uint32_t> removedTetCorners;
+    for (size_t j = 0; j < origVerts.size(); j++) {
         tetIdxsToRemove.clear();
         removedTetCorners.clear();
         for (size_t i = 0; i < tets.size(); i++) {
             // Math for calculating the circumcenter is from this thread
             // https://math.stackexchange.com/questions/2414640/circumsphere-of-a-tetrahedron
             constexpr double epsilon = std::numeric_limits<double>::epsilon();
-            const double det = glm::dot(2.0 * (tets[i].b - tets[i].a), glm::cross(tets[i].c - tets[i].a, tets[i].d - tets[i].a)); 
-            const dvec3 circumCenter = (det > -epsilon && det < epsilon) ? tets[0].a : tets[i].a + (glm::dot(tets[i].b - tets[i].a, tets[i].b - tets[i].a) * glm::cross(tets[i].c - tets[i].a, tets[i].d - tets[i].a) + glm::dot(tets[i].c - tets[i].a, tets[i].c - tets[i].a) * glm::cross(tets[i].d - tets[i].a, tets[i].b - tets[i].a) + glm::dot(tets[i].d - tets[i].a, tets[i].d - tets[i].a) * glm::cross(tets[i].b - tets[i].a, tets[i].c - tets[i].a)) / det;
-            if (glm::distance(vert, circumCenter) <= glm::distance(tets[i].a, circumCenter)) {
+            const dvec3 a = verts[tets[i].a];
+            const dvec3 b = verts[tets[i].b];
+            const dvec3 c = verts[tets[i].c];
+            const dvec3 d = verts[tets[i].d];
+            const double det = glm::dot(2.0 * (b - a), glm::cross(c - a, d - a)); 
+            const dvec3 circumCenter = (det > -epsilon && det < epsilon) ? verts[tets[0].a] : a + (glm::dot(b - a, b - a) * glm::cross(c - a, d - a) + glm::dot(c - a, c - a) * glm::cross(d - a, b - a) + glm::dot(d - a, d - a) * glm::cross(b - a, c - a)) / det;
+            if (glm::distance(verts[j], circumCenter) <= glm::distance(a, circumCenter)) {
                 tetIdxsToRemove.push_back(i);
-                removedTetCorners.push_back(tets[i].a);
-                removedTetCorners.push_back(tets[i].b);
-                removedTetCorners.push_back(tets[i].c);
-                removedTetCorners.push_back(tets[i].d);
+                removedTetCorners.insert(tets[i].a);
+                removedTetCorners.insert(tets[i].b);
+                removedTetCorners.insert(tets[i].c);
+                removedTetCorners.insert(tets[i].d);
             }
         }
         for (auto it = tetIdxsToRemove.rbegin(); it < tetIdxsToRemove.rend(); it++) tets.erase(tets.begin() + *it);
+        assert(removedTetCorners.size() == 0 || removedTetCorners.size() >= 3);
         if (removedTetCorners.size() > 0) {
-            Tetrahedron tet{.a = vert, .b = removedTetCorners[0], .c = removedTetCorners[1], .d = removedTetCorners[2]};
-            tets.push_back(tet);
-            for (size_t i = 3; i < removedTetCorners.size(); i++) {
+            // Maybe try storing the faces of the deleted tets and use those to make new ones?
+            TetrahedronIndices tet{.a = static_cast<uint32_t>(j)};
+            uint32_t idx = 0;
+            uint32_t firstOne;
+            uint32_t secondOne;
+            for (uint32_t cornerIdx : removedTetCorners) {
+                if (idx == 0) firstOne = cornerIdx;
+                if (idx == 1) secondOne = cornerIdx;
                 tet.b = tet.c;
                 tet.c = tet.d;
-                tet.d = removedTetCorners[i];
-                tets.push_back(tet);
+                tet.d = cornerIdx;
+                if (idx >= 2) tets.push_back(tet);
+                idx++;
             }
+            tet.b = tet.c;
+            tet.c = tet.d;
+            tet.d = firstOne;
+            tets.push_back(tet);
+            tet.b = tet.c;
+            tet.c = tet.d;
+            tet.d = secondOne;
+            tets.push_back(tet);
         }
     }
+    std::cout << tets.size() << "\n";
 
-    std::function<dvec3(const Tetrahedron &)> tetCentroid = [](const Tetrahedron &tet) {
-        return dvec3(tet.a.x + tet.b.x + tet.c.x + tet.d.x, tet.a.y + tet.b.y + tet.c.y + tet.d.y, tet.a.z + tet.b.z + tet.c.z + tet.d.z) / 4.0;
+    std::function<dvec3(const TetrahedronIndices &)> tetCentroid = [&](const TetrahedronIndices &tet) {
+        const dvec3 a = verts[tet.a];
+        const dvec3 b = verts[tet.b];
+        const dvec3 c = verts[tet.c];
+        const dvec3 d = verts[tet.d];
+        return dvec3(a.x + b.x + c.x + d.x, a.y + b.y + c.y + d.y, a.z + b.z + c.z + d.z) / 4.0;
     };
     tetIdxsToRemove.clear();
     for (size_t i = 0; i < tets.size(); i++) {
@@ -160,67 +183,11 @@ std::vector<TetrahedronIndices> tetralize(const std::vector<dvec3> &verts, const
 
     tetIdxsToRemove.clear();
     for (size_t i = 0; i < tets.size(); i++) {
-        bool aIsValid = false;
-        bool bIsValid = false;
-        bool cIsValid = false;
-        bool dIsValid = false;
-        for (const dvec3 &vert : verts) {
-            constexpr double epsilon = 0.00001;
-            if (glm::distance(tets[i].a, vert) > -epsilon && glm::distance(tets[i].a, vert) < epsilon) aIsValid = true;
-            if (glm::distance(tets[i].b, vert) > -epsilon && glm::distance(tets[i].b, vert) < epsilon) bIsValid = true;
-            if (glm::distance(tets[i].c, vert) > -epsilon && glm::distance(tets[i].c, vert) < epsilon) cIsValid = true;
-            if (glm::distance(tets[i].d, vert) > -epsilon && glm::distance(tets[i].d, vert) < epsilon) dIsValid = true;
-        }
-        if (!aIsValid || !bIsValid || !cIsValid || !dIsValid) tetIdxsToRemove.push_back(i);
+        if (tets[i].a >= origVerts.size() || tets[i].b >= origVerts.size() || tets[i].c >= origVerts.size() || tets[i].d >= origVerts.size()) tetIdxsToRemove.push_back(i);
     }
     for (auto it = tetIdxsToRemove.rbegin(); it < tetIdxsToRemove.rend(); it++) tets.erase(tets.begin() + *it);
 
-    for (auto it = tets.rbegin(); it < tets.rend(); it++) {
-        const std::array<dvec3, 4> comparisons1 = {it->a, it->b, it->c, it->d};
-        const dvec3 *compAddr = &it->a;
-        for (const Tetrahedron &tet : tets) {
-            if (&tet.a == compAddr) continue;
-            const std::array<dvec3, 4> comparisons2 = {tet.a, tet.b, tet.c, tet.d};
-            constexpr double epsilon = 0.00001;
-            uint32_t matches = 0;
-            for (const dvec3 &comp1 : comparisons1) {
-                for (const dvec3 &comp2 : comparisons2) {
-                    const double dst = glm::distance(comp1, comp2);
-                    if (dst > -epsilon && dst < epsilon) {
-                        matches++;
-                        break;
-                    }
-                }
-            }
-            if (matches == comparisons1.size()) {
-                tets.erase(std::next(it).base());
-                break;
-            }
-        }
-    }
-
-    std::vector<TetrahedronIndices> tetIdxs;
-    tetIdxs.reserve(tets.size());
-    for (const Tetrahedron &tet : tets) {
-        const std::array<dvec3, 4> corners = {tet.a, tet.b, tet.c, tet.d};
-        std::array<uint32_t, 4> indices;
-        uint32_t matchesFound = 0;
-        for (size_t i = 0; i < verts.size(); i++) {
-            constexpr double epsilon = 0.00001;
-            for (size_t j = 0; j < corners.size(); j++) {
-                const double dst = glm::distance(corners[j], verts[i]);
-                if (dst > -epsilon && dst < epsilon) {
-                    indices[j] = i;
-                    matchesFound++;
-                }
-            }
-        }
-        assert(matchesFound == indices.size());
-        tetIdxs.emplace_back(TetrahedronIndices{.a = indices[0], .b = indices[1], .c = indices[2], .d = indices[3]});
-    }
-    assert(tetIdxs.size() == tets.size());
-
-    return tetIdxs;
+    return tets;
 }
 
 Obj getObjFromScene(const vul::Scene &scene, const std::string &objNodeName)
@@ -250,7 +217,9 @@ Obj getObjFromScene(const vul::Scene &scene, const std::string &objNodeName)
     obj.pointMasses.reserve(uniqueVerts.size());
     for (size_t i = 0; i < uniqueVerts.size(); i++) uniqueVerts[i] = scene.vertices[uniqueVertexIndices[i] + obj.mesh.vertexOffset];
     for (const dvec3 &vert : uniqueVerts) obj.pointMasses.emplace_back(Pointmass{.pos = vert, .vel = dvec3(0.0)});
+    auto k = glfwGetTime();
     std::vector<TetrahedronIndices> tetrahedrons = tetralize(uniqueVerts, scene, obj.mesh);
+    std::cout << glfwGetTime() - k << "\n";
 
     std::unordered_set<uint64_t> uniquePmIdxPairs;
     for (const TetrahedronIndices &tet : tetrahedrons) {
