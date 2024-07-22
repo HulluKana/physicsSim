@@ -9,6 +9,7 @@ struct RenderingResources {
     std::unique_ptr<vul::VulBuffer> simMeshVertexBuffer;
     int simsPerFrame;
     bool simulate;
+    bool drawIndividualTetrahedrons;
 };
 struct RenderResult {
     bool skipFrame;

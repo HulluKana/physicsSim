@@ -107,9 +107,22 @@ void getRenderingStuffFromObj(RenderingResources &renderingResources, const Obj 
     std::vector<glm::vec3> simMeshVertices;
     for (const Pointmass &pm : obj.pointMasses) simMeshVertices.push_back(pm.pos);
     std::vector<uint32_t> simMeshIndices;
-    for (const DstConstraint &constraint : obj.dstConstraints) {
+    for (const VolConstraint &constraint : obj.volConstraints) {
         simMeshIndices.push_back(constraint.pm1idx);
         simMeshIndices.push_back(constraint.pm2idx);
+        simMeshIndices.push_back(constraint.pm3idx);
+
+        simMeshIndices.push_back(constraint.pm1idx);
+        simMeshIndices.push_back(constraint.pm2idx);
+        simMeshIndices.push_back(constraint.pm4idx);
+
+        simMeshIndices.push_back(constraint.pm2idx);
+        simMeshIndices.push_back(constraint.pm3idx);
+        simMeshIndices.push_back(constraint.pm4idx);
+
+        simMeshIndices.push_back(constraint.pm1idx);
+        simMeshIndices.push_back(constraint.pm4idx);
+        simMeshIndices.push_back(constraint.pm3idx);
     }
 
     std::shared_ptr<WireframePC> pushConstant = std::make_shared<WireframePC>();
@@ -135,7 +148,7 @@ void getRenderingStuffFromObj(RenderingResources &renderingResources, const Obj 
     pipelineConfig.setLayouts = {vulkano.renderDatas[0].descriptorSets[0][0]->getLayout()->getDescriptorSetLayout()};
     pipelineConfig.bindingDescriptions = {{0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX}};
     pipelineConfig.attributeDescriptions = {{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0}};
-    pipelineConfig.primitiveTopology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    pipelineConfig.polygonMode = VK_POLYGON_MODE_LINE;
     pipelineConfig.lineWidth = 2.0f;
 
 
@@ -175,6 +188,13 @@ RenderResult render(vul::Vulkano &vulkano, RenderingResources &renderingResource
     ImGui::Checkbox("Draw wireframes", &vulkano.renderDatas[1].enable);
     ImGui::Checkbox("Fill triangles", &vulkano.renderDatas[0].enable);
     ImGui::Checkbox("Draw simulation mesh", &vulkano.renderDatas[2].enable);
+    if (vulkano.renderDatas[2].enable) ImGui::Checkbox("Draw individual simulation tetrahedrons", &renderingResources.drawIndividualTetrahedrons);
+    if (renderingResources.drawIndividualTetrahedrons && vulkano.renderDatas[2].enable) {
+        assert(vulkano.renderDatas[2].drawDatas[0].indexCount % 12 == 0);
+        int tetrahedronIndex = vulkano.renderDatas[2].drawDatas[0].firstIndex / 12;
+        ImGui::SliderInt("Tetrehedron index", &tetrahedronIndex, 0, vulkano.renderDatas[2].drawDatas[0].indexCount / 12 - 1);
+        vulkano.renderDatas[2].drawDatas[0].firstIndex = tetrahedronIndex * 12;
+    } else vulkano.renderDatas[2].drawDatas[0].firstIndex = 0;
     ImGui::Checkbox("Simulate", &renderingResources.simulate);
     result.reset = ImGui::Button("Reset");
     ImGui::End();
@@ -196,7 +216,10 @@ RenderResult render(vul::Vulkano &vulkano, RenderingResources &renderingResource
         renderingResources.simMeshVertexBuffer->writeVector(simMeshVertices, 0);
     }
 
+    const uint32_t indexCount = vulkano.renderDatas[2].drawDatas[0].indexCount;
+    if (renderingResources.drawIndividualTetrahedrons) vulkano.renderDatas[2].drawDatas[0].indexCount = 12;
     result.exit = vulkano.endFrame(cmdBuf);
+    if (renderingResources.drawIndividualTetrahedrons) vulkano.renderDatas[2].drawDatas[0].indexCount = indexCount;
     result.simDeltaT = result.frameTime / static_cast<double>(renderingResources.simsPerFrame);
     
     return result;

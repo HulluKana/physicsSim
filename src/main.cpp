@@ -12,6 +12,7 @@ int main()
     RenderingResources renderingResources = initializeRenderingStuff("../Models", "Physic sim scene.gltf", vulkano);
     renderingResources.simsPerFrame = 500;
     renderingResources.simulate = false;
+    renderingResources.drawIndividualTetrahedrons = false;
     Obj origObj = getObjFromScene(vulkano.scene, "Cube");
     Obj obj = origObj;
     getRenderingStuffFromObj(renderingResources, obj, vulkano);
