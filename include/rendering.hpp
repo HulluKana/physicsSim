@@ -8,6 +8,7 @@ struct RenderingResources {
     std::unique_ptr<vul::VulBuffer> simMeshIndexBuffer;
     std::unique_ptr<vul::VulBuffer> simMeshVertexBuffer;
     int simsPerFrame;
+    float timeSpeed;
     bool simulate;
     bool drawIndividualTetrahedrons;
 };

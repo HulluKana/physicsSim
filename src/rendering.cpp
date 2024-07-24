@@ -181,7 +181,9 @@ RenderResult render(vul::Vulkano &vulkano, RenderingResources &renderingResource
 
     ImGui::Begin("Menu");
     ImGui::Text("Fps: %lf", 1.0 / result.frameTime);
+    ImGui::Text("Simulations per second: %lf", static_cast<double>(renderingResources.simsPerFrame) / static_cast<double>(renderingResources.timeSpeed) / result.frameTime);
     ImGui::DragInt("Simulations per frame", &renderingResources.simsPerFrame, static_cast<float>(renderingResources.simsPerFrame) * 0.05, 1, std::numeric_limits<int>::max());
+    ImGui::DragFloat("Time speed", &renderingResources.timeSpeed, renderingResources.timeSpeed * 0.05, 0.001, 1000.0);
     ImGui::Text("Potential energy: %lfJ\nKinetic energy: %lfJ\nConstraint energy: %lfJ\nVolume energy: %lfJ\nTotal energy: %lfJ", obj.energies.potentialEnergy, obj.energies.kineticEnergy,
             obj.energies.dstConstraintEnergy, obj.energies.volConstraintEnergy, obj.energies.potentialEnergy + obj.energies.kineticEnergy + obj.energies.dstConstraintEnergy + obj.energies.volConstraintEnergy);
     ImGui::Text("Starting energy: %lfJ", origEnergies.potentialEnergy + origEnergies.kineticEnergy + origEnergies.dstConstraintEnergy + origEnergies.volConstraintEnergy);
@@ -220,6 +222,7 @@ RenderResult render(vul::Vulkano &vulkano, RenderingResources &renderingResource
     if (renderingResources.drawIndividualTetrahedrons) vulkano.renderDatas[2].drawDatas[0].indexCount = 12;
     result.exit = vulkano.endFrame(cmdBuf);
     if (renderingResources.drawIndividualTetrahedrons) vulkano.renderDatas[2].drawDatas[0].indexCount = indexCount;
+    result.frameTime *= renderingResources.timeSpeed;
     result.simDeltaT = result.frameTime / static_cast<double>(renderingResources.simsPerFrame);
     
     return result;

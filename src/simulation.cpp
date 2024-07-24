@@ -60,90 +60,163 @@ struct TetrahedronIndices {
     uint32_t c;
     uint32_t d;
 };
-std::vector<TetrahedronIndices> tetralize(const std::vector<dvec3> &verts, const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
+std::vector<TetrahedronIndices> tetralize(const std::vector<dvec3> &origVerts, const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
 {
-    // A lot of my ideas for this algorithm come from https://people.eecs.berkeley.edu/~jrs/papers/cdtbasic.pdf
+    // Algorithm for figuring out a half-decent regular tetrahedron that contains all vertices is from
+    // https://computergraphics.stackexchange.com/questions/10533/how-to-compute-a-bounding-tetrahedron
+    dvec3 maxPos = dvec3(std::numeric_limits<double>::min());
+    dvec3 minPos = dvec3(std::numeric_limits<double>::max());
+    for (const dvec3 &vert : origVerts) {
+        maxPos = glm::max(maxPos, vert);
+        minPos = glm::min(minPos, vert);
+    }
+    const dvec3 center = (maxPos + minPos) / 2.0;
+    maxPos += 2.0 * (maxPos - center);
+    minPos += 2.0 * (minPos - center);
+
+    std::vector<dvec3> verts = origVerts;
+    std::vector<TetrahedronIndices> tets(1);
+    tets[0].a = verts.size();
+    tets[0].b = verts.size() + 1;
+    tets[0].c = verts.size() + 2;
+    tets[0].d = verts.size() + 3;
+    verts.push_back(maxPos);
+    verts.push_back(dvec3(minPos.x, maxPos.y, minPos.z));
+    verts.push_back(dvec3(minPos.x, minPos.y, maxPos.z));
+    verts.push_back(dvec3(maxPos.x, minPos.y, minPos.z));
+
+    // Math for calculating the circumcenter is from this thread
+    // https://math.stackexchange.com/questions/2414640/circumsphere-of-a-tetrahedron
+    std::function<bool(const TetrahedronIndices &, const dvec3 &)> isPointInsideTetrahedron = [&](const TetrahedronIndices &tet, const dvec3 &point) {
+        constexpr double epsilon = std::numeric_limits<double>::epsilon();
+        const dvec3 a = verts[tet.a];
+        const dvec3 b = verts[tet.b];
+        const dvec3 c = verts[tet.c];
+        const dvec3 d = verts[tet.d];
+        const double det = glm::dot(2.0 * (b - a), glm::cross(c - a, d - a)); 
+        const dvec3 circumCenter = (det > -epsilon && det < epsilon) ? a : a + (glm::dot(b - a, b - a) * glm::cross(c - a, d - a) + glm::dot(c - a, c - a) * glm::cross(d - a, b - a) + glm::dot(d - a, d - a) * glm::cross(b - a, c - a)) / det;
+        return glm::distance(point, circumCenter) < glm::distance(a, circumCenter);
+    };
+
     struct Face {
         uint32_t a;
         uint32_t b;
         uint32_t c;
-        bool reverseNormal;
     };
-    std::unordered_map<uint64_t, Face> unfinishedFaces;
-    for (uint32_t i = mesh.firstIndex; i < mesh.firstIndex + mesh.indexCount; i += 3) {
-        std::array<uint32_t, 3> triIndices;
-        std::array<dvec3, 3> triCorners = {scene.vertices[scene.indices[i] + mesh.vertexOffset], scene.vertices[scene.indices[i + 1] + mesh.vertexOffset], scene.vertices[scene.indices[i + 2] + mesh.vertexOffset]};
-        for (uint32_t j = 0; j < 3; j++) {
-            for (size_t k = 0; k < verts.size(); k++) {
-                constexpr double epsolon = 0.00001;
-                if (glm::distance(triCorners[j], verts[k]) < epsolon) {
-                    triIndices[j] = k;
+    std::vector<size_t> tetIdxsToRemove;
+    std::vector<Face> removedTetFaces;
+    std::vector<Face> uniqueTetFaces;
+    std::unordered_set<uint32_t> indicesToSkip;
+    for (size_t j = 0; j < origVerts.size(); j++) {
+        tetIdxsToRemove.clear();
+        removedTetFaces.clear();
+        uniqueTetFaces.clear();
+        indicesToSkip.clear();
+        for (size_t i = 0; i < tets.size(); i++) {
+            if (isPointInsideTetrahedron(tets[i], verts[j])) {
+                tetIdxsToRemove.push_back(i);
+                removedTetFaces.emplace_back(Face{tets[i].a, tets[i].b, tets[i].c});
+                removedTetFaces.emplace_back(Face{tets[i].a, tets[i].b, tets[i].d});
+                removedTetFaces.emplace_back(Face{tets[i].b, tets[i].c, tets[i].d});
+                removedTetFaces.emplace_back(Face{tets[i].a, tets[i].c, tets[i].d});
+            }
+        }
+        for (auto it = tetIdxsToRemove.rbegin(); it < tetIdxsToRemove.rend(); it++) tets.erase(tets.begin() + *it);
+        for (size_t i = 0; i < removedTetFaces.size(); i++) {
+            if (indicesToSkip.find(i) != indicesToSkip.end()) continue;
+            bool foundMatch = false;
+            const Face &face1 = removedTetFaces[i];
+            assert(face1.a != face1.b && face1.a != face1.c && face1.b != face1.c);
+            for (size_t k = 0; k < removedTetFaces.size(); k++) {
+                if (i == k) continue;
+                const Face &face2 = removedTetFaces[k];
+                if ((face1.a == face2.a || face1.a == face2.b || face1.a == face2.c) &&
+                    (face1.b == face2.a || face1.b == face2.b || face1.b == face2.c) &&
+                    (face1.c == face2.a || face1.c == face2.b || face1.c == face2.c)) {
+                    foundMatch = true;
+                    indicesToSkip.insert(k);
                     break;
                 }
             }
+            if (!foundMatch) uniqueTetFaces.push_back(face1);
         }
-        const Face face1 = {triIndices[0], triIndices[1], triIndices[2], false};
-        const Face face2 = {triIndices[0], triIndices[1], triIndices[2], true};
-        uint64_t seed = 0;
-        hashCombine(seed, face1.a, face1.b, face1.c, face1.reverseNormal);
-        unfinishedFaces[seed] = face1;
-        seed = 0;
-        hashCombine(seed, face2.a, face2.b, face2.c, face2.reverseNormal);
-        unfinishedFaces[seed] = face2;
+        assert(uniqueTetFaces.size() == 0 || uniqueTetFaces.size() >= 3);
+        for (const Face &face : uniqueTetFaces) {
+            tets.emplace_back(TetrahedronIndices{static_cast<uint32_t>(j), face.a, face.b, face.c});
+        }
     }
+    std::cout << tets.size() << "\n";
 
-    // This cursed math is obtained from running "Solve(Length((u1,u2,u3)-((k1, k2, k3)+(n1,n2,n3)*t))=Length((v1,v2,v3)-((k1,k2,k3)+(n1,n2,n3)*t)),t)" on geogebras cas calculator. I actually came up with this myself.
-    // Unfortunately it doesnt seem to work too well and requires further testing
-    /*
-    std::function<double(const dvec3 &, const dvec3 &, const dvec3 &, const dvec3 &)> getCircumsphereRadius = [](const dvec3 &u, const dvec3 &v, const dvec3 &n, const dvec3 &k) {
-        return (-2.0 * k.x * u.x + 2.0 * k.x * v.x - 2.0 * k.y * u.y + 2.0 * k.y * v.y - 2.0 * k.z * u.z + 2.0 * k.z * v.z + u.x * u.x + u.y * u.y + u.z * u.z - v.x * v.x - v.y * v.y - v.z * v.z) / (2.0 * n.x * u.x - 2.0 * n.x * v.x + 2.0 * n.y * u.y - 2.0 * n.y * v.y + 2.0 * n.z * u.z - 2.0 * n.z * v.z);
+    std::function<dvec3(const TetrahedronIndices &)> tetCentroid = [&](const TetrahedronIndices &tet) {
+        const dvec3 a = verts[tet.a];
+        const dvec3 b = verts[tet.b];
+        const dvec3 c = verts[tet.c];
+        const dvec3 d = verts[tet.d];
+        return dvec3(a.x + b.x + c.x + d.x, a.y + b.y + c.y + d.y, a.z + b.z + c.z + d.z) / 4.0;
     };
-    */
-    std::vector<TetrahedronIndices> tets;
-    for (auto it = unfinishedFaces.begin(); it != unfinishedFaces.end();) {
-        const Face &face = it->second;
-        const dvec3 &a = verts[face.a];
-        const dvec3 &b = verts[face.b];
-        const dvec3 &c = verts[face.c];
-        const dvec3 middle = (a + b + c) / 3.0;
-        dvec3 normal = glm::normalize(glm::cross(verts[face.b] - verts[face.a], verts[face.c] - verts[face.a]));
-        if (face.reverseNormal) normal *= -1.0;
-        double minDst = std::numeric_limits<double>::max();
-        size_t minIdx;
-        bool foundVert = false;
-        for (size_t j = 0; j < verts.size(); j++) {
-            constexpr double epsilon = 0.00001;
-            const dvec3 &d = verts[j];
-            if (glm::dot(d - middle, normal) <= 0.0) continue;
-            if (glm::distance(a, d) < epsilon || glm::distance(b, d) < epsilon || glm::distance(c, d) < epsilon) continue;
-            //const double dst = getCircumsphereRadius(a, verts[j], normal, middle);
-            const double det = glm::dot(2.0 * (b - a), glm::cross(c - a, d - a)); 
-            const dvec3 circumCenter = (det > -epsilon && det < epsilon) ? a : a + (glm::dot(b - a, b - a) * glm::cross(c - a, d - a) + glm::dot(c - a, c - a) * glm::cross(d - a, b - a) + glm::dot(d - a, d - a) * glm::cross(b - a, c - a)) / det;
-            const double dst = glm::distance(d, circumCenter);
-            if (dst < minDst) {
-                minDst = dst;
-                minIdx = j;
-                foundVert = true;
+    tetIdxsToRemove.clear();
+    for (size_t i = 0; i < tets.size(); i++) {
+        const dvec3 centroid = tetCentroid(tets[i]);
+        constexpr std::array<dvec3, 6> rays = {dvec3(0.0, 1.0, 0.0), dvec3(0.0, -1.0, 0.0), dvec3(1.0, 0.0, 0.0), dvec3(-1.0, 0.0, 0.0), dvec3(0.0, 0.0, 1.0), dvec3(0.0, 0.0, -1.0)};
+        uint32_t misses = 0;
+        for (const dvec3 &ray : rays) {
+            double minDst = std::numeric_limits<double>::max();
+            dvec3 closestTriangleNormal;
+            bool foundIntersection = false;
+            for (size_t j = mesh.firstIndex; j < mesh.firstIndex + mesh.indexCount; j += 3) {
+                // Ray-triangle intersection code from
+                // https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm
+                constexpr double epsilon = std::numeric_limits<double>::epsilon();
+
+                const dvec3 a = scene.vertices[scene.indices[j] + mesh.vertexOffset];
+                const dvec3 b = scene.vertices[scene.indices[j + 1] + mesh.vertexOffset];
+                const dvec3 c = scene.vertices[scene.indices[j + 2] + mesh.vertexOffset];
+
+                const dvec3 edge1 = b - a;
+                const dvec3 edge2 = c - a;
+                const dvec3 rayCrossEdge2 = glm::cross(ray, edge2);
+                const double det = glm::dot(edge1, rayCrossEdge2);
+                if (det > -epsilon && det < epsilon) continue;
+
+                const double invDet = 1.0 / det;
+                const dvec3 s = centroid - a;
+                const double u = invDet * glm::dot(s, rayCrossEdge2);
+                if (u < 0.0 || u > 1.0) continue;
+
+                const dvec3 sCrossEdge1 = glm::cross(s, edge1);
+                const double v = invDet * glm::dot(ray, sCrossEdge1);
+                if (v < 0.0 || u + v > 1.0) continue;
+
+                const double dst = invDet * glm::dot(edge2, sCrossEdge1);
+                if (dst > epsilon && dst < minDst) {
+                    minDst = dst;
+                    closestTriangleNormal = scene.normals[scene.indices[j] + mesh.vertexOffset];
+                    foundIntersection = true;
+                }
+            }
+            if (!foundIntersection || glm::dot(ray, closestTriangleNormal) <= 0.0) misses++;
+            if (misses >= rays.size() / 2) {
+                tetIdxsToRemove.push_back(i);
+                break;
             }
         }
-        if (foundVert) {
-            assert(face.a != minIdx && face.b != minIdx && face.c != minIdx);
-            std::array<Face, 6> faces = {Face{face.a, face.b, static_cast<uint32_t>(minIdx), false}, Face{face.b, face.c, static_cast<uint32_t>(minIdx), false}, Face{face.a, static_cast<uint32_t>(minIdx), face.c, false}};
-            for (uint32_t i = 0; i < 3; i++) {
-                faces[i + 3] = faces[i];
-                faces[i + 3].reverseNormal = true;
-            }
-            for (const Face &tetFace : faces) {
-                uint64_t seed = 0;
-                const auto tetFaceIt = unfinishedFaces.find(seed);
-                assert(tetFaceIt != it);
-                if (tetFaceIt != unfinishedFaces.end()) unfinishedFaces.erase(tetFaceIt);
-                else unfinishedFaces[seed] = tetFace;
-            }
-            tets.emplace_back(TetrahedronIndices{face.a, face.b, face.c, static_cast<uint32_t>(minIdx)});
-        }
-        it = unfinishedFaces.erase(it);
     }
+    for (auto it = tetIdxsToRemove.rbegin(); it < tetIdxsToRemove.rend(); it++) tets.erase(tets.begin() + *it);
+
+    /*
+    uint32_t nonDelaunayTets = 0;
+    for (const TetrahedronIndices &tet : tets) {
+        for (size_t j = 0; j < verts.size(); j++) {
+            if (tet.a == j || tet.b == j || tet.c == j || tet.d == j) continue;
+            if (isPointInsideTetrahedron(tet, verts[j])) {
+                nonDelaunayTets++;
+                break;
+            }
+        }
+    }
+    std::cout << nonDelaunayTets << " tetrahedrons out of " << tets.size() << " break the delaunay condition\n";
+    */
+
     return tets;
 }
 

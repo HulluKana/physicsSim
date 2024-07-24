@@ -11,6 +11,7 @@ int main()
     vul::settings::maxFps = 144.0;
     RenderingResources renderingResources = initializeRenderingStuff("../Models", "Physic sim scene.gltf", vulkano);
     renderingResources.simsPerFrame = 500;
+    renderingResources.timeSpeed = 1.0;
     renderingResources.simulate = false;
     renderingResources.drawIndividualTetrahedrons = false;
     Obj origObj = getObjFromScene(vulkano.scene, "Cube");
