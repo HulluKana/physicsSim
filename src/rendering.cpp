@@ -1,4 +1,6 @@
 #include "simulation.hpp"
+#include "vul_comp_pipeline.hpp"
+#include "vul_gltf_loader.hpp"
 #include <host_device.hpp>
 #include <rendering.hpp>
 #include <imgui.h>
@@ -80,6 +82,7 @@ RenderingResources initializeRenderingStuff(const std::string &modelDir, const s
 
     std::vector<std::shared_ptr<WireframePC>> wireframePushConstants(vulkano.scene.nodes.size());
     vul::Vulkano::RenderData wireframeRenderData = defaultRenderData;
+    wireframeRenderData.enable = false;
     wireframeRenderData.pipeline = std::make_shared<vul::VulPipeline>(vulkano.getVulDevice(), "wireframe.vert.spv", "wireframe.frag.spv", wireframePipelineConfig);
     wireframeRenderData.vertexBuffers = {vulkano.scene.vertexBuffer.get()};
     for (size_t i = 0; i < vulkano.scene.nodes.size(); i++) {
@@ -98,6 +101,21 @@ RenderingResources initializeRenderingStuff(const std::string &modelDir, const s
         }
     }
     vulkano.scene.vertexBuffer->writeVector(vulkano.scene.vertices, 0);
+
+    std::vector<vul::Vulkano::Descriptor> descs;
+    vul::Vulkano::Descriptor desc;
+    desc.type = vul::Vulkano::DescriptorType::ssbo;
+    desc.stages = {vul::Vulkano::ShaderStage::comp};
+    desc.count = 1;
+    desc.content = vulkano.scene.indexBuffer.get();
+    descs.push_back(desc);
+    desc.content = vulkano.scene.vertexBuffer.get();
+    descs.push_back(desc);
+    desc.content = vulkano.scene.normalBuffer.get();
+    descs.push_back(desc);
+    renderingResources.normalsUpdaterDescSet = vulkano.createDescriptorSet(descs);
+
+    renderingResources.normalsUpdaterPipeline = std::make_unique<vul::VulCompPipeline>("normalsUpdater.comp.spv", std::vector{renderingResources.normalsUpdaterDescSet->getLayout()->getDescriptorSetLayout()}, vulkano.getVulDevice(), 1);
 
     return renderingResources;
 }
@@ -193,7 +211,7 @@ RenderResult render(vul::Vulkano &vulkano, RenderingResources &renderingResource
     if (vulkano.renderDatas[2].enable) ImGui::Checkbox("Draw individual simulation tetrahedrons", &renderingResources.drawIndividualTetrahedrons);
     if (renderingResources.drawIndividualTetrahedrons && vulkano.renderDatas[2].enable) {
         assert(vulkano.renderDatas[2].drawDatas[0].indexCount % 12 == 0);
-        int tetrahedronIndex = vulkano.renderDatas[2].drawDatas[0].firstIndex / 12;
+        static int tetrahedronIndex = 0;
         ImGui::SliderInt("Tetrehedron index", &tetrahedronIndex, 0, vulkano.renderDatas[2].drawDatas[0].indexCount / 12 - 1);
         vulkano.renderDatas[2].drawDatas[0].firstIndex = tetrahedronIndex * 12;
     } else vulkano.renderDatas[2].drawDatas[0].firstIndex = 0;
@@ -222,6 +240,21 @@ RenderResult render(vul::Vulkano &vulkano, RenderingResources &renderingResource
     if (renderingResources.drawIndividualTetrahedrons) vulkano.renderDatas[2].drawDatas[0].indexCount = 12;
     result.exit = vulkano.endFrame(cmdBuf);
     if (renderingResources.drawIndividualTetrahedrons) vulkano.renderDatas[2].drawDatas[0].indexCount = indexCount;
+
+    /*
+    The normalsUpdater isn't quite ready yet.
+
+    NormalUpdaterPC normalUpdaterPC;
+    normalUpdaterPC.triangleCount = obj.mesh.indexCount / 3;
+    normalUpdaterPC.indexOffset = obj.mesh.firstIndex / 3;
+    normalUpdaterPC.vertexOffset = obj.mesh.vertexOffset;
+    renderingResources.normalsUpdaterPipeline->pPushData = &normalUpdaterPC;
+    renderingResources.normalsUpdaterPipeline->pushSize = sizeof(normalUpdaterPC);
+    renderingResources.normalsUpdaterPipeline->begin({renderingResources.normalsUpdaterDescSet->getSet()});
+    renderingResources.normalsUpdaterPipeline->dispatch(normalUpdaterPC.triangleCount / 32, 1, 1);
+    renderingResources.normalsUpdaterPipeline->end(false);
+    */
+
     result.frameTime *= renderingResources.timeSpeed;
     result.simDeltaT = result.frameTime / static_cast<double>(renderingResources.simsPerFrame);
     

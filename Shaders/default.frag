@@ -58,7 +58,7 @@ vec3 BRDF(vec3 surfaceNormal, vec3 viewDirection, vec3 lightDirection, vec3 spec
     const float roughnessPow2 = roughness * roughness;
     const float whatDoICallThis = 1.0 + dotHalfNorm * dotHalfNorm * (roughnessPow2 - 1.0);
     const float ggx = roughnessPow2 / (pi * whatDoICallThis * whatDoICallThis);
-    return (freshnelColor * visibleFraction * ggx) / (4.0 * dot(surfaceNormal, lightDirection * dot(surfaceNormal, viewDirection)));
+    return (freshnelColor * visibleFraction * ggx) / (4.0 * dot(surfaceNormal, lightDirection) * dot(surfaceNormal, viewDirection));
 }
 
 void main()

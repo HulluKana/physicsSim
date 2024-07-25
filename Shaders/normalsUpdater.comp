@@ -1,0 +1,38 @@
+#version 460
+
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_scalar_block_layout : enable
+
+#include "../include/host_device.hpp"
+
+layout(set = 0, binding = 0, scalar) readonly buffer IndexBuffer {uvec3 indices[];};
+layout(set = 0, binding = 1, scalar) readonly buffer VertexBuffer {vec3 vertices[];};
+layout(set = 0, binding = 2, scalar) buffer NormalBuffer {vec3 normals[];};
+
+layout(push_constant) uniform Push{NormalUpdaterPC push;};
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    if (gl_GlobalInvocationID.x >= push.triangleCount) return;
+
+    const uvec3 triIdxs = indices[gl_GlobalInvocationID.x + push.indexOffset] + uvec3(push.vertexOffset); 
+    const vec3 vert1 = vertices[triIdxs.x];
+    const vec3 vert2 = vertices[triIdxs.y];
+    const vec3 vert3 = vertices[triIdxs.z];
+    const vec3 oldNrm1 = normals[triIdxs.x];
+    const vec3 oldNrm2 = normals[triIdxs.y];
+    const vec3 oldNrm3 = normals[triIdxs.z];
+
+    vec3 newNrm1 = normalize(cross(vert2 - vert1, vert3 - vert1));
+    vec3 newNrm2 = normalize(cross(vert1 - vert2, vert3 - vert2));
+    vec3 newNrm3 = normalize(cross(vert1 - vert3, vert2 - vert3));
+    newNrm1 *= sign(dot(newNrm1, oldNrm1));
+    newNrm2 *= sign(dot(newNrm2, oldNrm2));
+    newNrm3 *= sign(dot(newNrm3, oldNrm3));
+
+    normals[triIdxs.x] = newNrm1;
+    normals[triIdxs.y] = newNrm2;
+    normals[triIdxs.z] = newNrm3;
+}

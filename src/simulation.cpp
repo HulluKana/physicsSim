@@ -45,15 +45,6 @@ void calculateEnergies(Obj &obj)
     }
 }
 
-// Hash combine from https://stackoverflow.com/questions/2590677/how-do-i-combine-hash-values-in-c0x
-inline void hashCombine(std::size_t& seed) { }
-template <typename T, typename... Rest>
-inline void hashCombine(std::size_t& seed, const T& v, Rest... rest) {
-    std::hash<T> hasher;
-    seed ^= hasher(v) + 0x9e3779b9 + (seed<<6) + (seed>>2);
-    hashCombine(seed, rest...);
-}
-
 struct TetrahedronIndices {
     uint32_t a;
     uint32_t b;
@@ -87,15 +78,18 @@ std::vector<TetrahedronIndices> tetralize(const std::vector<dvec3> &origVerts, c
 
     // Math for calculating the circumcenter is from this thread
     // https://math.stackexchange.com/questions/2414640/circumsphere-of-a-tetrahedron
-    std::function<bool(const TetrahedronIndices &, const dvec3 &)> isPointInsideTetrahedron = [&](const TetrahedronIndices &tet, const dvec3 &point) {
+    std::function<dvec3(const TetrahedronIndices &)> tetrahedronCircumcenter = [&](const TetrahedronIndices &tet) {
         constexpr double epsilon = std::numeric_limits<double>::epsilon();
         const dvec3 a = verts[tet.a];
         const dvec3 b = verts[tet.b];
         const dvec3 c = verts[tet.c];
         const dvec3 d = verts[tet.d];
         const double det = glm::dot(2.0 * (b - a), glm::cross(c - a, d - a)); 
-        const dvec3 circumCenter = (det > -epsilon && det < epsilon) ? a : a + (glm::dot(b - a, b - a) * glm::cross(c - a, d - a) + glm::dot(c - a, c - a) * glm::cross(d - a, b - a) + glm::dot(d - a, d - a) * glm::cross(b - a, c - a)) / det;
-        return glm::distance(point, circumCenter) < glm::distance(a, circumCenter);
+        return (det > -epsilon && det < epsilon) ? a : a + (glm::dot(b - a, b - a) * glm::cross(c - a, d - a) + glm::dot(c - a, c - a) * glm::cross(d - a, b - a) + glm::dot(d - a, d - a) * glm::cross(b - a, c - a)) / det;
+    };
+    std::function<bool(const TetrahedronIndices &, const dvec3 &)> isPointInsideTetrahedron = [&](const TetrahedronIndices &tet, const dvec3 &point) {
+        const dvec3 circumCenter = tetrahedronCircumcenter(tet);
+        return glm::distance(point, circumCenter) <  glm::distance(verts[tet.a], circumCenter); 
     };
 
     struct Face {
@@ -142,7 +136,18 @@ std::vector<TetrahedronIndices> tetralize(const std::vector<dvec3> &origVerts, c
         }
         assert(uniqueTetFaces.size() == 0 || uniqueTetFaces.size() >= 3);
         for (const Face &face : uniqueTetFaces) {
-            tets.emplace_back(TetrahedronIndices{static_cast<uint32_t>(j), face.a, face.b, face.c});
+            const TetrahedronIndices tet = {static_cast<uint32_t>(j), face.a, face.b, face.c};
+            const dvec3 circumCenter = tetrahedronCircumcenter(tet);
+            const double radius = glm::distance(verts[j], circumCenter);
+            bool nonDenaulnay = false;
+            for (size_t i = 0; i < j; i++) {
+                if (i == face.a || i == face.b || i == face.c) continue;
+                if (glm::distance(verts[i], circumCenter) < radius - 0.000001) {
+                    nonDenaulnay = true;
+                    break;
+                }
+            }
+            if (!nonDenaulnay) tets.push_back(tet);
         }
     }
     std::cout << tets.size() << "\n";
@@ -203,8 +208,8 @@ std::vector<TetrahedronIndices> tetralize(const std::vector<dvec3> &origVerts, c
     }
     for (auto it = tetIdxsToRemove.rbegin(); it < tetIdxsToRemove.rend(); it++) tets.erase(tets.begin() + *it);
 
-    /*
     uint32_t nonDelaunayTets = 0;
+    uint32_t flatTets = 0;
     for (const TetrahedronIndices &tet : tets) {
         for (size_t j = 0; j < verts.size(); j++) {
             if (tet.a == j || tet.b == j || tet.c == j || tet.d == j) continue;
@@ -213,9 +218,15 @@ std::vector<TetrahedronIndices> tetralize(const std::vector<dvec3> &origVerts, c
                 break;
             }
         }
+        const dvec3 a = verts[tet.a];
+        const dvec3 b = verts[tet.b];
+        const dvec3 c = verts[tet.c];
+        const dvec3 d = verts[tet.d];
+        const double det = glm::dot(2.0 * (b - a), glm::cross(c - a, d - a)); 
+        if (fabs(det) < 0.000001) flatTets++;
     }
     std::cout << nonDelaunayTets << " tetrahedrons out of " << tets.size() << " break the delaunay condition\n";
-    */
+    std::cout << flatTets << " tetrahedrons out of " << tets.size() << " are flat\n";
 
     return tets;
 }
@@ -300,7 +311,11 @@ void simulate(Obj &obj, double frameTime, double deltaT)
             pm.vel -= dvec3(0.0, 9.81, 0.0) * deltaT;
             pm.oldPos = pm.pos;
             pm.pos += pm.vel * deltaT;
-            pm.pos.y = std::max(pm.pos.y, 0.0);
+            if (pm.pos.y < 0.0) {
+                // Kinda hacky
+                pm.oldPos.y = -(pm.oldPos.y - pm.pos.y);
+                pm.pos.y = 0.0;
+            }
         }
         for (DstConstraint &constraint : obj.dstConstraints) {
             Pointmass &pm1 = obj.pointMasses[constraint.pm1idx];

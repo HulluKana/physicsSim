@@ -28,4 +28,10 @@ struct WireframePC {
     vec4 wireframeColor;
 };
 
+struct NormalUpdaterPC {
+    uint triangleCount;
+    uint vertexOffset;
+    uint indexOffset;
+};
+
 #endif
