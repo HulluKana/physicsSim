@@ -28,7 +28,7 @@ file(GLOB_RECURSE VUL_SRC "../vulkano/essentials/src/*.cpp" "../vulkano/optional
 file(GLOB_RECURSE SRC "../src/*.cpp")
 add_executable(physicsSim "${SRC}" "${VUL_SRC}")
 add_dependencies(physicsSim shaders)
-target_compile_options(physicsSim PRIVATE "-Wall" "-g" "-O3")
+target_compile_options(physicsSim PRIVATE "-Wall" "-g" "-O3" "--std=c++20")
 
 add_compile_definitions(VUL_ENABLE_DEBUG_NAMER)
 
