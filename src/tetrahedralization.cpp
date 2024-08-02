@@ -1,3 +1,7 @@
+#include <cstdint>
+#include <glm/ext/quaternion_geometric.hpp>
+#include <glm/geometric.hpp>
+#include <limits>
 #include <tetrahedralization.hpp>
 
 #include <bit>
@@ -5,14 +9,14 @@
 #include <unordered_set>
 #include <iostream>
 
-struct UniqueVertsMesh {
+struct TriangleMesh {
     std::vector<dvec3> verts;
     std::vector<glm::uvec3> triangleIndices;
     std::vector<glm::uvec2> segmentIndices;
 };
-UniqueVertsMesh getUniqueVertsFromMesh(const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
+TriangleMesh getTriangeMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
 {
-    UniqueVertsMesh uniqueVertsMesh;
+    TriangleMesh triangleMesh;
 
     constexpr double epsilon = 0.00001;
     std::vector<uint32_t> uniqueVertexIndices;
@@ -21,8 +25,7 @@ UniqueVertsMesh getUniqueVertsFromMesh(const vul::Scene &scene, const vul::GltfL
         bool unique = true;
         uint32_t uniqueVert = uniqueVertexIndices.size();
         for (size_t j = 0; j < uniqueVertexIndices.size(); j++) {
-            const glm::vec3 diff = glm::abs(scene.vertices[i + mesh.vertexOffset] - scene.vertices[uniqueVertexIndices[j] + mesh.vertexOffset]);
-            if (diff.x < epsilon && diff.y < epsilon && diff.z < epsilon && true) {
+            if (glm::distance(scene.vertices[i + mesh.vertexOffset], scene.vertices[uniqueVertexIndices[j] + mesh.vertexOffset]) < epsilon) {
                 unique = false;
                 uniqueVert = j;
                 break;
@@ -32,17 +35,17 @@ UniqueVertsMesh getUniqueVertsFromMesh(const vul::Scene &scene, const vul::GltfL
         meshVertToUniqueVertMap[i] = uniqueVert;
     }
 
-    uniqueVertsMesh.verts.reserve(uniqueVertexIndices.size());
-    for (size_t i = 0; i < uniqueVertexIndices.size(); i++) uniqueVertsMesh.verts.push_back(scene.vertices[uniqueVertexIndices[i] + mesh.vertexOffset]);
+    triangleMesh.verts.reserve(uniqueVertexIndices.size());
+    for (size_t i = 0; i < uniqueVertexIndices.size(); i++) triangleMesh.verts.push_back(scene.vertices[uniqueVertexIndices[i] + mesh.vertexOffset]);
 
-    uniqueVertsMesh.triangleIndices.reserve(mesh.indexCount / 3);
+    triangleMesh.triangleIndices.reserve(mesh.indexCount / 3);
     for (uint32_t i = mesh.firstIndex; i < mesh.firstIndex + mesh.indexCount; i += 3) {
-        uniqueVertsMesh.triangleIndices.push_back(glm::uvec3(meshVertToUniqueVertMap.at(scene.indices[i]),
+        triangleMesh.triangleIndices.push_back(glm::uvec3(meshVertToUniqueVertMap.at(scene.indices[i]),
                     meshVertToUniqueVertMap.at(scene.indices[i + 1]), meshVertToUniqueVertMap.at(scene.indices[i + 2])));
     }
 
     std::unordered_set<uint64_t> uniqueMeshSegments;
-    for (const glm::uvec3 &triIndices : uniqueVertsMesh.triangleIndices) {
+    for (const glm::uvec3 &triIndices : triangleMesh.triangleIndices) {
         std::array<glm::uvec2, 3> uniqueSegmentIndices = {glm::uvec2{triIndices.x, triIndices.y},
             {triIndices.x, triIndices.z}, {triIndices.y, triIndices.z}};
         for (glm::uvec2 &segmentIndices : uniqueSegmentIndices) {
@@ -54,10 +57,10 @@ UniqueVertsMesh getUniqueVertsFromMesh(const vul::Scene &scene, const vul::GltfL
             uniqueMeshSegments.insert(std::bit_cast<uint64_t>(segmentIndices));
         }
     }
-    uniqueVertsMesh.segmentIndices.reserve(uniqueMeshSegments.size());
-    for (uint64_t segment : uniqueMeshSegments) uniqueVertsMesh.segmentIndices.push_back(std::bit_cast<glm::uvec2>(segment));
+    triangleMesh.segmentIndices.reserve(uniqueMeshSegments.size());
+    for (uint64_t segment : uniqueMeshSegments) triangleMesh.segmentIndices.push_back(std::bit_cast<glm::uvec2>(segment));
 
-    return uniqueVertsMesh;
+    return triangleMesh;
 }
 
 dvec3 tetrahedronCircumcenter(const TetrahedronIndices &tet, const std::vector<dvec3> &verts)
@@ -80,7 +83,7 @@ bool isPointInsideTetrahedron(const dvec3 &point, const TetrahedronIndices &tet,
     return glm::distance(point, circumCenter) <  glm::distance(verts[tet.a], circumCenter); 
 }
 
-uint32_t countMissingSegments(const UniqueVertsMesh &uniqueVertsMesh, const TetrahedronMesh &tetMesh)
+std::unordered_set<uint64_t> getUniqueTetrahedronSegments(const TetrahedronMesh &tetMesh)
 {
     std::unordered_set<uint64_t> uniqueTetrahedronSegments;
     for (const TetrahedronIndices &tet : tetMesh.tets) {
@@ -96,8 +99,15 @@ uint32_t countMissingSegments(const UniqueVertsMesh &uniqueVertsMesh, const Tetr
             uniqueTetrahedronSegments.insert(std::bit_cast<uint64_t>(segmentIndices));
         }
     }
+    return uniqueTetrahedronSegments;
+}
+
+uint32_t countMissingSegments(const TriangleMesh &triangleMesh, const TetrahedronMesh &tetMesh)
+{
+    const std::unordered_set<uint64_t> uniqueTetrahedronSegments = getUniqueTetrahedronSegments(tetMesh);
     uint32_t missingSegments = 0;
-    for (glm::uvec2 segmentIndices : uniqueVertsMesh.segmentIndices) if (uniqueTetrahedronSegments.find(std::bit_cast<uint64_t>(segmentIndices)) == uniqueTetrahedronSegments.end()) missingSegments++;
+    for (glm::uvec2 segment : triangleMesh.segmentIndices)
+        if (uniqueTetrahedronSegments.find(std::bit_cast<uint64_t>(segment)) == uniqueTetrahedronSegments.end()) missingSegments++;
     return missingSegments;
 }
 
@@ -232,12 +242,106 @@ TetrahedronMesh createConvexHullTetrahedralMesh(const std::vector<dvec3> &origVe
     return tetMesh;
 }
 
+void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, TriangleMesh &triMesh)
+{
+    const TriangleMesh origTriMesh = triMesh; 
+
+    std::unordered_map<uint32_t, std::vector<uint32_t>> segsIntersectedAtVertMap;
+    for (size_t i = 0; i < origTriMesh.segmentIndices.size(); i++) {
+        for (size_t j = 0; j < origTriMesh.segmentIndices.size(); j++) {
+            if (i == j) continue;
+
+            struct SegmentIntersectInfo {
+                bool segment1isReverseOrder;
+                bool segment2isReverseOrder;
+            };
+            std::array<SegmentIntersectInfo, 4> segmentIntersectInfos = {SegmentIntersectInfo{false, false}, {true, false}, {false, true}, {true, true}};
+            for (SegmentIntersectInfo segIntInf : segmentIntersectInfos) {
+                const uint32_t segment1startIdx = segIntInf.segment1isReverseOrder ? origTriMesh.segmentIndices[i].y : origTriMesh.segmentIndices[i].x;
+                const uint32_t segment2startIdx = segIntInf.segment2isReverseOrder ? origTriMesh.segmentIndices[j].y : origTriMesh.segmentIndices[j].x;
+                if (segment1startIdx == segment2startIdx) {
+                    const uint32_t segment1endIdx = segIntInf.segment1isReverseOrder ? origTriMesh.segmentIndices[i].x : origTriMesh.segmentIndices[i].y;
+                    const uint32_t segment2endIdx = segIntInf.segment2isReverseOrder ? origTriMesh.segmentIndices[j].x : origTriMesh.segmentIndices[j].y;
+                    const dvec3 seg1dir = origTriMesh.verts[segment1endIdx] - origTriMesh.verts[segment1startIdx];
+                    const dvec3 seg2dir = origTriMesh.verts[segment2endIdx] - origTriMesh.verts[segment2startIdx];
+                    if (glm::dot(seg1dir, seg2dir) > 0.0) segsIntersectedAtVertMap[segment1startIdx].push_back(i);
+                    break;
+                }
+            }
+        }
+    }
+
+    for (const std::pair<const uint32_t, std::vector<uint32_t>> &vertIntSegs : segsIntersectedAtVertMap) {
+        double dstToNearestVert = std::numeric_limits<double>::max();
+        for (size_t k = 0; k < origTriMesh.verts.size(); k++) {
+            if (vertIntSegs.first == k) continue;
+            dstToNearestVert = std::min(dstToNearestVert, glm::distance(origTriMesh.verts[k], origTriMesh.verts[vertIntSegs.first]));
+        }
+        double localFeatureSize = dstToNearestVert;
+        for (glm::uvec2 seg : origTriMesh.segmentIndices) {
+            if (vertIntSegs.first == seg.x || vertIntSegs.first == seg.y) continue;
+            const dvec3 &a = origTriMesh.verts[vertIntSegs.first];
+            const dvec3 &b = origTriMesh.verts[seg.x];
+            const dvec3 &c = origTriMesh.verts[seg.y];
+            const double dstToSeg = glm::length(glm::cross(a - b, a - c)) / glm::length(c - b);
+            localFeatureSize = std::min(localFeatureSize, dstToSeg);
+        }
+
+        double shortestSegLength = std::numeric_limits<double>::max();
+        for (uint32_t seg : vertIntSegs.second) shortestSegLength = std::min(shortestSegLength,
+                glm::distance(origTriMesh.verts[origTriMesh.segmentIndices[seg].x], origTriMesh.verts[origTriMesh.segmentIndices[seg].y]));
+
+        const double radius = std::min(localFeatureSize, shortestSegLength / 3.0);
+        for (uint32_t seg : vertIntSegs.second) {
+            assert(origTriMesh.segmentIndices[seg].x == vertIntSegs.first || origTriMesh.segmentIndices[seg].y == vertIntSegs.first);
+            if (vertIntSegs.first == origTriMesh.segmentIndices[seg].x) {
+                triMesh.segmentIndices.emplace_back(glm::uvec2{origTriMesh.segmentIndices[seg].x, triMesh.verts.size()});
+                triMesh.segmentIndices[seg].x = triMesh.verts.size();
+                const dvec3 segDir = glm::normalize(origTriMesh.verts[origTriMesh.segmentIndices[seg].y] - origTriMesh.verts[vertIntSegs.first]);
+                triMesh.verts.push_back(origTriMesh.verts[vertIntSegs.first] + segDir * radius);
+            } else {
+                triMesh.segmentIndices.emplace_back(glm::uvec2{origTriMesh.segmentIndices[seg].y, triMesh.verts.size()});
+                triMesh.segmentIndices[seg].y = triMesh.verts.size();
+                const dvec3 segDir = glm::normalize(origTriMesh.verts[origTriMesh.segmentIndices[seg].y] - origTriMesh.verts[vertIntSegs.first]);
+                triMesh.verts.push_back(origTriMesh.verts[vertIntSegs.first] + segDir * radius);
+            }
+
+            tetMesh.verts.push_back(triMesh.verts[triMesh.verts.size() - 1]);
+            insertVertexToTetrahedralizedMesh(tetMesh, tetMesh.verts.size() - 1);
+        }
+    }
+
+    std::unordered_set<uint32_t> segmentsToSplit;
+    for (uint32_t i = 0; i < triMesh.segmentIndices.size(); i++) segmentsToSplit.insert(i);
+    while (segmentsToSplit.size() > 0) {
+        const std::unordered_set<uint64_t> uniqueTetrahedronSegments = getUniqueTetrahedronSegments(tetMesh);
+        for (auto it = segmentsToSplit.begin(); it != segmentsToSplit.end();) {
+            const uint32_t idx = *it;
+            if (uniqueTetrahedronSegments.find(std::bit_cast<uint64_t>(triMesh.segmentIndices[idx])) == uniqueTetrahedronSegments.end()) {
+                it = segmentsToSplit.erase(it);
+                continue;
+            }
+
+            triMesh.verts.push_back(triMesh.verts[triMesh.segmentIndices[idx].x] +
+                    (triMesh.verts[triMesh.segmentIndices[idx].y] - triMesh.verts[triMesh.segmentIndices[idx].x]) / 2.0);
+            tetMesh.verts.push_back(triMesh.verts[triMesh.verts.size() - 1]);
+            insertVertexToTetrahedralizedMesh(tetMesh, tetMesh.verts.size() - 1);
+            triMesh.segmentIndices.emplace_back(glm::uvec2{triMesh.segmentIndices[idx].x, triMesh.verts.size() - 1});
+            triMesh.segmentIndices[idx].x = triMesh.verts.size() - 1;
+            segmentsToSplit.insert(triMesh.segmentIndices.size() - 1);
+
+            it++;
+        }
+    }
+}
+
 TetrahedronMesh tetralizeMesh(const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
 {
-    UniqueVertsMesh uniqueVertsMesh = getUniqueVertsFromMesh(scene, mesh);
-    TetrahedronMesh convexTetMesh = createConvexHullTetrahedralMesh(uniqueVertsMesh.verts);
+    TriangleMesh triangleMesh = getTriangeMeshFromGltfMesh(scene, mesh);
+    TetrahedronMesh convexTetMesh = createConvexHullTetrahedralMesh(triangleMesh.verts);
+    edgeProtectTetrahedronMesh(convexTetMesh, triangleMesh);
 
-    std::cout << countMissingSegments(uniqueVertsMesh, convexTetMesh) << " segments out of " << uniqueVertsMesh.segmentIndices.size() << " are missing from tetrahedralization\n"; 
+    std::cout << countMissingSegments(triangleMesh, convexTetMesh) << " segments out of " << triangleMesh.segmentIndices.size() << " are missing from tetrahedralization\n"; 
     std::cout << countNonDelaunayTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " break the delaunay condition\n";
     std::cout << countFlatTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " are flat\n";
 
