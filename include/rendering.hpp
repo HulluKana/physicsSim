@@ -7,8 +7,9 @@
 #include <array>
 struct RenderingResources {
     std::array<std::unique_ptr<vul::VulBuffer>, vul::VulSwapChain::MAX_FRAMES_IN_FLIGHT> ubos;
-    std::unique_ptr<vul::VulBuffer> simMeshIndexBuffer;
     std::unique_ptr<vul::VulBuffer> simMeshVertexBuffer;
+    std::unique_ptr<vul::VulBuffer> simMeshIndexBuffer;
+    std::unique_ptr<vul::VulBuffer> simMeshPointsIndexBuffer;
     std::unique_ptr<vul::VulCompPipeline> normalsUpdaterPipeline;
     std::unique_ptr<vul::VulDescriptorSet> normalsUpdaterDescSet;
     int simsPerFrame;

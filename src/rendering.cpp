@@ -1,6 +1,7 @@
 #include "simulation.hpp"
 #include "vul_comp_pipeline.hpp"
 #include "vul_gltf_loader.hpp"
+#include "vulkano_program.hpp"
 #include <host_device.hpp>
 #include <rendering.hpp>
 #include <imgui.h>
@@ -48,7 +49,7 @@ RenderingResources initializeRenderingStuff(const std::string &modelDir, const s
 
     std::vector<std::shared_ptr<DefaultPC>> defaultPushConstants(vulkano.scene.nodes.size());
     vul::Vulkano::RenderData defaultRenderData{};
-    defaultRenderData.enable = true;
+    defaultRenderData.enable = false;
     defaultRenderData.pipeline = std::make_shared<vul::VulPipeline>(vulkano.getVulDevice(), "default.vert.spv", "default.frag.spv", defaultPipelineConfig);
     defaultRenderData.is3d = true;
     defaultRenderData.sampleFromDepth = false;
@@ -142,9 +143,15 @@ void getRenderingStuffFromObj(RenderingResources &renderingResources, const Obj 
         simMeshIndices.push_back(constraint.pm4idx);
         simMeshIndices.push_back(constraint.pm3idx);
     }
+    std::vector<uint32_t> simMeshPointIndices(obj.pointMasses.size());
+    for (size_t i = 0; i < simMeshPointIndices.size(); i++) simMeshPointIndices[i] = i;
 
     std::shared_ptr<WireframePC> pushConstant = std::make_shared<WireframePC>();
-    pushConstant->wireframeColor = glm::vec4(1.0f, 0.0f, 1.0f, 1.0f);
+    pushConstant->wireframeColor = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+
+    std::shared_ptr<PointsPC> pointPushConstant = std::make_shared<PointsPC>();
+    pointPushConstant->pointsColor = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+    pointPushConstant->pointSize = 10.0f;
 
     vul::VulPipeline::DrawData drawData{};
     drawData.pPushData = static_cast<std::shared_ptr<void>>(pushConstant);
@@ -153,12 +160,20 @@ void getRenderingStuffFromObj(RenderingResources &renderingResources, const Obj 
     drawData.firstIndex = 0;
     drawData.indexCount = simMeshIndices.size();
 
+    vul::VulPipeline::DrawData pointDrawData = drawData;
+    pointDrawData.pPushData = static_cast<std::shared_ptr<void>>(pointPushConstant);
+    pointDrawData.pushDataSize = sizeof(PointsPC);
+    pointDrawData.indexCount = simMeshPointIndices.size();
+
     renderingResources.simMeshVertexBuffer = std::make_unique<vul::VulBuffer>(vulkano.getVulDevice());
     renderingResources.simMeshVertexBuffer->loadVector(simMeshVertices);
     renderingResources.simMeshVertexBuffer->createBuffer(false, vul::VulBuffer::usage_vertexBuffer);
     renderingResources.simMeshIndexBuffer = std::make_unique<vul::VulBuffer>(vulkano.getVulDevice());
     renderingResources.simMeshIndexBuffer->loadVector(simMeshIndices);
     renderingResources.simMeshIndexBuffer->createBuffer(true, static_cast<vul::VulBuffer::Usage>(vul::VulBuffer::usage_indexBuffer | vul::VulBuffer::usage_transferDst));
+    renderingResources.simMeshPointsIndexBuffer = std::make_unique<vul::VulBuffer>(vulkano.getVulDevice());
+    renderingResources.simMeshPointsIndexBuffer->loadVector(simMeshPointIndices);
+    renderingResources.simMeshPointsIndexBuffer->createBuffer(true, static_cast<vul::VulBuffer::Usage>(vul::VulBuffer::usage_indexBuffer | vul::VulBuffer::usage_transferDst));
 
     vul::VulPipeline::PipelineConfigInfo pipelineConfig{};
     pipelineConfig.depthAttachmentFormat = vulkano.vulRenderer.getDepthFormat();
@@ -169,6 +184,9 @@ void getRenderingStuffFromObj(RenderingResources &renderingResources, const Obj 
     pipelineConfig.polygonMode = VK_POLYGON_MODE_LINE;
     pipelineConfig.lineWidth = 2.0f;
 
+    vul::VulPipeline::PipelineConfigInfo pointsPipelineConfig = pipelineConfig;
+    pointsPipelineConfig.primitiveTopology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    pointsPipelineConfig.polygonMode = VK_POLYGON_MODE_FILL;
 
     vul::Vulkano::RenderData renderData{};
     renderData.enable = true;
@@ -184,6 +202,13 @@ void getRenderingStuffFromObj(RenderingResources &renderingResources, const Obj 
     renderData.descriptorSets = vulkano.renderDatas[0].descriptorSets;
     renderData.drawDatas.push_back(drawData);
     vulkano.renderDatas.push_back(renderData);
+
+    vul::Vulkano::RenderData pointsRenderData = renderData;
+    pointsRenderData.enable = true;
+    pointsRenderData.pipeline = std::make_shared<vul::VulPipeline>(vulkano.getVulDevice(), "points.vert.spv", "points.frag.spv", pointsPipelineConfig);
+    pointsRenderData.indexBuffer = renderingResources.simMeshPointsIndexBuffer.get();
+    pointsRenderData.drawDatas[0] = pointDrawData;
+    vulkano.renderDatas.push_back(pointsRenderData);
 }
 
 RenderResult render(vul::Vulkano &vulkano, RenderingResources &renderingResources, const Obj &obj, const Energies &origEnergies)
@@ -215,6 +240,11 @@ RenderResult render(vul::Vulkano &vulkano, RenderingResources &renderingResource
         ImGui::SliderInt("Tetrehedron index", &tetrahedronIndex, 0, vulkano.renderDatas[2].drawDatas[0].indexCount / 12 - 1);
         vulkano.renderDatas[2].drawDatas[0].firstIndex = tetrahedronIndex * 12;
     } else vulkano.renderDatas[2].drawDatas[0].firstIndex = 0;
+    ImGui::Checkbox("Draw simulation mesh points", &vulkano.renderDatas[3].enable);
+    if (vulkano.renderDatas[3].enable) {
+        PointsPC *pointsPC = static_cast<PointsPC *>(vulkano.renderDatas[3].drawDatas[0].pPushData.get());
+        ImGui::DragFloat("Point size", &pointsPC->pointSize, 0.05, 0.0, 1000.0);
+    }
     ImGui::Checkbox("Simulate", &renderingResources.simulate);
     result.reset = ImGui::Button("Reset");
     ImGui::End();

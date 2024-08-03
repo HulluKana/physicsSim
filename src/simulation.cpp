@@ -47,8 +47,7 @@ Obj getObjFromScene(const vul::Scene &scene, const std::string &objNodeName)
         bool unique = true;
         uint32_t pointMassIdx = uniqueVertexIndices.size();
         for (size_t j = 0; j < uniqueVertexIndices.size(); j++) {
-            const glm::vec3 diff = glm::abs(scene.vertices[i + obj.mesh.vertexOffset] - scene.vertices[uniqueVertexIndices[j] + obj.mesh.vertexOffset]);
-            if (diff.x < epsilon && diff.y < epsilon && diff.z < epsilon && true) {
+            if (glm::distance(scene.vertices[i + obj.mesh.vertexOffset], scene.vertices[uniqueVertexIndices[j] + obj.mesh.vertexOffset]) < epsilon) {
                 unique = false;
                 pointMassIdx = j;
                 break;
