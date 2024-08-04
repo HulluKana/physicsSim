@@ -14,4 +14,14 @@ struct TetrahedronMesh {
     std::vector<dvec3> verts;
     std::vector<TetrahedronIndices> tets;
 };
-TetrahedronMesh tetralizeMesh(const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh);
+struct FacetMesh {
+    std::vector<dvec3> verts;
+    std::vector<glm::uvec2> segmentIndices;
+    std::vector<std::vector<uint32_t>> facetIndices;
+    std::vector<std::vector<glm::uvec2>> facetSegments;
+};
+struct TetralizationResults {
+    TetrahedronMesh tetMesh;
+    FacetMesh facetMesh;
+};
+TetralizationResults tetralizeMesh(const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh);

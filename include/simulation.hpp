@@ -39,6 +39,7 @@ struct Obj {
     Energies energies;
     vul::GltfLoader::GltfPrimMesh mesh;
     std::unordered_map<uint32_t, uint32_t> meshVertexIdxToPointMassIdx;
+    std::vector<std::vector<glm::uvec2>> facetSegments;
 };
 
 Obj getObjFromScene(const vul::Scene &scene, const std::string &objNodeName);

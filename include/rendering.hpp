@@ -10,6 +10,7 @@ struct RenderingResources {
     std::unique_ptr<vul::VulBuffer> simMeshVertexBuffer;
     std::unique_ptr<vul::VulBuffer> simMeshIndexBuffer;
     std::unique_ptr<vul::VulBuffer> simMeshPointsIndexBuffer;
+    std::unique_ptr<vul::VulBuffer> facetSegmentsIndexBuffer;
     std::unique_ptr<vul::VulCompPipeline> normalsUpdaterPipeline;
     std::unique_ptr<vul::VulDescriptorSet> normalsUpdaterDescSet;
     int simsPerFrame;

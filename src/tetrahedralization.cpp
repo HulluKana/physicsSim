@@ -1,21 +1,11 @@
-#include <algorithm>
-#include <cstdint>
-#include <functional>
-#include <glm/ext/quaternion_geometric.hpp>
-#include <glm/geometric.hpp>
-#include <limits>
 #include <tetrahedralization.hpp>
 
-#include <bit>
 #include <unordered_map>
 #include <unordered_set>
 #include <iostream>
+#include <algorithm>
+#include <functional>
 
-struct FacetMesh {
-    std::vector<dvec3> verts;
-    std::vector<glm::uvec2> segmentIndices;
-    std::vector<std::vector<uint32_t>> facetIndices;
-};
 FacetMesh getFacetMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
 {
     FacetMesh facetMesh;
@@ -42,28 +32,26 @@ FacetMesh getFacetMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoade
 
     std::unordered_set<uint32_t> untestedTriangles;
     for (uint32_t i = mesh.firstIndex; i < mesh.firstIndex + mesh.indexCount; i += 3) untestedTriangles.insert(i);
-    std::vector<std::unordered_set<uint32_t>> uniqueFacetIndices;
-    std::vector<std::vector<std::pair<uint32_t, uint32_t>>> encounteredSegments;
+    std::vector<std::vector<glm::uvec2>> encounteredSegments;
     for (uint32_t i = mesh.firstIndex; i < mesh.firstIndex + mesh.indexCount; i += 3) {
         if (untestedTriangles.find(i) == untestedTriangles.end()) continue;
         untestedTriangles.erase(i);
-        uniqueFacetIndices.emplace_back(std::unordered_set<uint32_t>{});
-        encounteredSegments.emplace_back(std::vector<std::pair<uint32_t, uint32_t>>{});
+        encounteredSegments.emplace_back(std::vector<glm::uvec2>{});
         const std::array<uint32_t, 3> triIdxs = {meshVertToUniqueVertMap.at(scene.indices[i]), meshVertToUniqueVertMap.at(scene.indices[i + 1]),
                 meshVertToUniqueVertMap.at(scene.indices[i + 2])};
         const dvec3 normal = glm::normalize(glm::cross(facetMesh.verts[triIdxs[1]] - facetMesh.verts[triIdxs[0]],
                     facetMesh.verts[triIdxs[2]] - facetMesh.verts[triIdxs[0]]));
+        const glm::dvec4 abcd(normal, -glm::dot(normal, facetMesh.verts[triIdxs[0]]));
 
-        std::function<void(const std::array<uint32_t, 3> &)> insertTriIdxs = [&uniqueFacetIndices, &encounteredSegments](const std::array<uint32_t, 3> &triIdxs) {
-            for (size_t k = 0; k < triIdxs.size(); k++) uniqueFacetIndices[uniqueFacetIndices.size() - 1].insert(triIdxs[k]);
-            encounteredSegments[encounteredSegments.size() - 1].emplace_back(std::pair<uint32_t, uint32_t>{triIdxs[0], triIdxs[1]});
-            encounteredSegments[encounteredSegments.size() - 1].emplace_back(std::pair<uint32_t, uint32_t>{triIdxs[0], triIdxs[2]});
-            encounteredSegments[encounteredSegments.size() - 1].emplace_back(std::pair<uint32_t, uint32_t>{triIdxs[1], triIdxs[2]});
+        std::function<void(const std::array<uint32_t, 3> &)> insertTriIdxs = [&encounteredSegments](const std::array<uint32_t, 3> &triIdxs) {
+            encounteredSegments[encounteredSegments.size() - 1].emplace_back(glm::uvec2{triIdxs[0], triIdxs[1]});
+            encounteredSegments[encounteredSegments.size() - 1].emplace_back(glm::uvec2{triIdxs[0], triIdxs[2]});
+            encounteredSegments[encounteredSegments.size() - 1].emplace_back(glm::uvec2{triIdxs[1], triIdxs[2]});
             for (size_t k = encounteredSegments[encounteredSegments.size() - 1].size() - 3; k < encounteredSegments[encounteredSegments.size() - 1].size(); k++) {
-                if (encounteredSegments[encounteredSegments.size() - 1][k].first > encounteredSegments[encounteredSegments.size() - 1][k].second) {
-                    const uint32_t temp = encounteredSegments[encounteredSegments.size() - 1][k].first;
-                    encounteredSegments[encounteredSegments.size() - 1][k].first = encounteredSegments[encounteredSegments.size() - 1][k].second;
-                    encounteredSegments[encounteredSegments.size() - 1][k].second = temp;
+                if (encounteredSegments[encounteredSegments.size() - 1][k].x > encounteredSegments[encounteredSegments.size() - 1][k].y) {
+                    const uint32_t temp = encounteredSegments[encounteredSegments.size() - 1][k].x;
+                    encounteredSegments[encounteredSegments.size() - 1][k].x = encounteredSegments[encounteredSegments.size() - 1][k].y;
+                    encounteredSegments[encounteredSegments.size() - 1][k].y = temp;
                 }
             }
         };
@@ -72,47 +60,85 @@ FacetMesh getFacetMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoade
         for (auto it = untestedTriangles.begin(); it != untestedTriangles.end();) {
             const std::array<uint32_t, 3> testTriIdxs = {meshVertToUniqueVertMap.at(scene.indices[*it]),
                 meshVertToUniqueVertMap.at(scene.indices[*it + 1]), meshVertToUniqueVertMap.at(scene.indices[*it + 2])};
-            uint32_t commonVertex;
-            bool foundCommonVertex = false;
-            for (uint32_t vert1 : triIdxs) {
-                for (uint32_t vert2 : testTriIdxs) {
-                    if (vert1 == vert2) {
-                        commonVertex = vert1;
-                        foundCommonVertex = true;
-                        break;
-                    }
-                }
-                if (foundCommonVertex) break;
-            }
-            if (foundCommonVertex) {
-                const dvec3 testNormal = glm::normalize(glm::cross(facetMesh.verts[testTriIdxs[1]] - facetMesh.verts[testTriIdxs[0]],
-                            facetMesh.verts[testTriIdxs[2]] - facetMesh.verts[testTriIdxs[0]]));
-                const glm::dvec4 abcd(normal, -glm::dot(normal, facetMesh.verts[commonVertex]));
-                const glm::dvec4 testAbcd(testNormal, -glm::dot(testNormal, facetMesh.verts[commonVertex]));
-                constexpr double epsilon = 0.0001;
-                if (glm::distance(abcd, testAbcd) < epsilon || glm::distance(abcd, -testAbcd) < epsilon) {
-                    insertTriIdxs(testTriIdxs);
-                    it = untestedTriangles.erase(it);
-                    continue;
-                }
+            const dvec3 testNormal = glm::normalize(glm::cross(facetMesh.verts[testTriIdxs[1]] - facetMesh.verts[testTriIdxs[0]],
+                        facetMesh.verts[testTriIdxs[2]] - facetMesh.verts[testTriIdxs[0]]));
+            const glm::dvec4 testAbcd(testNormal, -glm::dot(testNormal, facetMesh.verts[testTriIdxs[0]]));
+            constexpr double epsilon = 0.0001;
+            if (glm::distance(abcd, testAbcd) < epsilon || glm::distance(abcd, -testAbcd) < epsilon) {
+                insertTriIdxs(testTriIdxs);
+                it = untestedTriangles.erase(it);
+                continue;
             }
             it++;
         }
     }
+
+    facetMesh.facetSegments.clear();
+    std::unordered_map<uint32_t, std::vector<uint32_t>> connectionGraph;
+    std::unordered_set<uint32_t> toDoSet;
+    std::unordered_set<uint32_t> doneSet;
+    for (const std::vector<glm::uvec2> &segments : encounteredSegments) {
+        connectionGraph.clear();
+        for (glm::uvec2 segment : segments) {
+            connectionGraph[segment.x].push_back(segment.y);
+            connectionGraph[segment.y].push_back(segment.x);
+        }
+
+        size_t subFacetStartIdx = facetMesh.facetSegments.size();
+        facetMesh.facetSegments.emplace_back(std::vector<glm::uvec2>{segments[0]});
+        for (size_t i = 1; i < segments.size(); i++) {
+            doneSet.clear();
+            toDoSet.clear();
+            toDoSet.insert(segments[i].x);
+            bool segmentIsConnected = false;
+            while (!toDoSet.empty() && !segmentIsConnected) {
+                const uint32_t vert = *toDoSet.begin();
+                toDoSet.erase(toDoSet.begin());
+                doneSet.insert(vert);
+                for (uint32_t reachableVert : connectionGraph[vert]) {
+                    for (size_t j = subFacetStartIdx; j < facetMesh.facetSegments.size(); j++) {
+                        if (reachableVert == facetMesh.facetSegments[j][0].x) {
+                            facetMesh.facetSegments[j].push_back(segments[i]);
+                            segmentIsConnected = true;
+                            break;
+                        }
+                    }
+                    if (segmentIsConnected) break;
+                    if (doneSet.find(reachableVert) == doneSet.end()) toDoSet.insert(reachableVert);
+                }
+            }
+            if (!segmentIsConnected) facetMesh.facetSegments.emplace_back(std::vector<glm::uvec2>{segments[i]});
+        }
+    }
+
+    std::unordered_set<uint64_t> uniqueMeshSegments;
+    const std::vector<std::vector<glm::uvec2>> nonUniqueSegments = facetMesh.facetSegments;
+    facetMesh.facetSegments.clear();
+    for (const std::vector<glm::uvec2> &segments : nonUniqueSegments) {
+        facetMesh.facetSegments.emplace_back(std::vector<glm::uvec2>{});
+        for (glm::uvec2 segment : segments) {
+            if (std::count(segments.begin(), segments.end(), segment) == 1) {
+                uniqueMeshSegments.insert(std::bit_cast<uint64_t>(glm::uvec2(segment.x, segment.y)));
+                facetMesh.facetSegments[facetMesh.facetSegments.size() - 1].emplace_back(glm::uvec2{segment.x, segment.y});
+            }
+        }
+    }
+    facetMesh.facetSegments.shrink_to_fit();
+    facetMesh.segmentIndices.reserve(uniqueMeshSegments.size());
+    for (uint64_t segment : uniqueMeshSegments) facetMesh.segmentIndices.push_back(std::bit_cast<glm::uvec2>(segment));
+
+    std::vector<std::unordered_set<uint32_t>> uniqueFacetIndices(facetMesh.facetSegments.size());
+    for (size_t i = 0; i < facetMesh.facetSegments.size(); i++) {
+        for (glm::uvec2 segment : facetMesh.facetSegments[i]) {
+            uniqueFacetIndices[i].insert(segment.x);
+            uniqueFacetIndices[i].insert(segment.y);
+        }
+    }
+
     facetMesh.facetIndices.resize(uniqueFacetIndices.size());
     for (size_t i = 0; i < uniqueFacetIndices.size(); i++) {
         for (uint32_t idx : uniqueFacetIndices[i]) facetMesh.facetIndices[i].push_back(idx);
     }
-
-    std::unordered_set<uint64_t> uniqueMeshSegments;
-    for (const std::vector<std::pair<uint32_t, uint32_t>> &segments : encounteredSegments) {
-        for (std::pair<uint32_t, uint32_t> segment : segments) {
-            if (std::count(segments.begin(), segments.end(), segment) == 1)
-                uniqueMeshSegments.insert(std::bit_cast<uint64_t>(glm::uvec2(segment.first, segment.second)));
-        }
-    }
-    facetMesh.segmentIndices.reserve(uniqueMeshSegments.size());
-    for (uint64_t segment : uniqueMeshSegments) facetMesh.segmentIndices.push_back(std::bit_cast<glm::uvec2>(segment));
     std::cout << facetMesh.facetIndices.size() << "\n";
 
     return facetMesh;
@@ -328,7 +354,8 @@ void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
 
     std::function<void(uint32_t, uint32_t)> insertVertexInTheMiddleOfSegmentToAllRelevantFacets = [&](uint32_t segmentIdx, uint32_t vertexIdx) {
         bool foundMatchingFacet = false;
-        for (std::vector<uint32_t> &facetIndices : facetMesh.facetIndices) {
+        for (size_t i = 0; i < facetMesh.facetIndices.size(); i++) {
+            std::vector<uint32_t> &facetIndices = facetMesh.facetIndices[i];
             bool foundStart = false;
             bool foundEnd = false;
             for (uint32_t facetIdx : facetIndices) {
@@ -338,11 +365,15 @@ void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
             }
             if (foundStart && foundEnd) {
                 facetIndices.push_back(vertexIdx);
+                facetMesh.facetSegments[i].emplace_back(glm::uvec2{origTriMesh.segmentIndices[segmentIdx].x, vertexIdx});
+                facetMesh.facetSegments[i].emplace_back(glm::uvec2{origTriMesh.segmentIndices[segmentIdx].y, vertexIdx});
                 foundMatchingFacet = true;
             }
         }
-        if (!foundMatchingFacet) facetMesh.facetIndices.emplace_back(std::vector<uint32_t>{origTriMesh.segmentIndices[segmentIdx].x,
-                origTriMesh.segmentIndices[segmentIdx].y, vertexIdx});
+        if (!foundMatchingFacet) {
+            facetMesh.facetIndices.emplace_back(std::vector<uint32_t>{origTriMesh.segmentIndices[segmentIdx].x, origTriMesh.segmentIndices[segmentIdx].y, vertexIdx});
+            facetMesh.facetSegments.emplace_back(std::vector<glm::uvec2>{{origTriMesh.segmentIndices[segmentIdx].x, vertexIdx}, {origTriMesh.segmentIndices[segmentIdx].x, vertexIdx}});
+        }
     };
 
     for (const std::pair<const uint32_t, std::vector<uint32_t>> &vertIntSegs : segsIntersectedAtVertMap) {
@@ -414,16 +445,16 @@ void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
     }
 }
 
-TetrahedronMesh tetralizeMesh(const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
+TetralizationResults tetralizeMesh(const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
 {
     FacetMesh facetMesh = getFacetMeshFromGltfMesh(scene, mesh);
     TetrahedronMesh convexTetMesh = createConvexHullTetrahedralMesh(facetMesh.verts);
-    edgeProtectTetrahedronMesh(convexTetMesh, facetMesh);
+    //edgeProtectTetrahedronMesh(convexTetMesh, facetMesh);
 
     std::cout << countMissingSegments(facetMesh, convexTetMesh) << " segments out of " << facetMesh.segmentIndices.size() << " are missing from tetrahedralization\n"; 
     std::cout << countNonDelaunayTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " break the delaunay condition\n";
     std::cout << countFlatTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " are flat\n";
     std::cout << facetMesh.facetIndices.size() << "\n";
 
-    return convexTetMesh;
+    return TetralizationResults{convexTetMesh, facetMesh};
 }

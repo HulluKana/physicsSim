@@ -57,12 +57,13 @@ Obj getObjFromScene(const vul::Scene &scene, const std::string &objNodeName)
         obj.meshVertexIdxToPointMassIdx[i] = pointMassIdx;
     }
 
-    const TetrahedronMesh tetMesh = tetralizeMesh(scene, obj.mesh);
+    const TetralizationResults tetRes = tetralizeMesh(scene, obj.mesh);
     obj.pointMasses.reserve(uniqueVertexIndices.size());
-    for (const dvec3 &vert : tetMesh.verts) obj.pointMasses.emplace_back(Pointmass{.pos = vert, .vel = dvec3(0.0)});
+    for (const dvec3 &vert : tetRes.tetMesh.verts) obj.pointMasses.emplace_back(Pointmass{.pos = vert, .vel = dvec3(0.0)});
+    obj.facetSegments = tetRes.facetMesh.facetSegments;
 
     std::unordered_set<uint64_t> uniquePmIdxPairs;
-    for (const TetrahedronIndices &tet : tetMesh.tets) {
+    for (const TetrahedronIndices &tet : tetRes.tetMesh.tets) {
         const std::array<uint32_t, 4> indices = {tet.a, tet.b, tet.c, tet.d};
         for (uint32_t i = 0; i < 4; i++) {
             for (uint32_t j = 0; j < 4; j++) {
@@ -84,7 +85,7 @@ Obj getObjFromScene(const vul::Scene &scene, const std::string &objNodeName)
         obj.dstConstraints.push_back(constraint);
     }
     
-    for (const TetrahedronIndices &tet : tetMesh.tets) {
+    for (const TetrahedronIndices &tet : tetRes.tetMesh.tets) {
         VolConstraint constraint;
         constraint.pm1idx = tet.a;
         constraint.pm2idx = tet.b;
@@ -95,7 +96,6 @@ Obj getObjFromScene(const vul::Scene &scene, const std::string &objNodeName)
         constraint.inverseStiffness = 0.0;
         obj.volConstraints.push_back(constraint);
     }
-
     calculateEnergies(obj);
 
     return obj;
