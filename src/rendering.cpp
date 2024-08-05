@@ -212,7 +212,7 @@ void getRenderingStuffFromObj(RenderingResources &renderingResources, const Obj 
     pointsPipelineConfig.polygonMode = VK_POLYGON_MODE_FILL;
 
     vul::Vulkano::RenderData renderData{};
-    renderData.enable = false;
+    renderData.enable = true;
     renderData.pipeline = std::make_shared<vul::VulPipeline>(vulkano.getVulDevice(), "wireframe.vert.spv", "wireframe.frag.spv", pipelineConfig);
     renderData.is3d = true;
     renderData.sampleFromDepth = false;
@@ -234,7 +234,7 @@ void getRenderingStuffFromObj(RenderingResources &renderingResources, const Obj 
     vulkano.renderDatas.push_back(pointsRenderData);
 
     vul::Vulkano::RenderData facetSegmentsRenderData = renderData;
-    facetSegmentsRenderData.enable = true;
+    facetSegmentsRenderData.enable = false;
     facetSegmentsRenderData.pipeline = std::make_shared<vul::VulPipeline>(vulkano.getVulDevice(), "wireframe.vert.spv", "wireframe.frag.spv", facetSegmentsPipelineConfig);
     facetSegmentsRenderData.indexBuffer = renderingResources.facetSegmentsIndexBuffer.get();
     facetSegmentsRenderData.drawDatas[0] = facetSegmentsDrawData;

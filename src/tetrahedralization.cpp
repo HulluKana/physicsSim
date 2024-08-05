@@ -326,11 +326,11 @@ TetrahedronMesh createConvexHullTetrahedralMesh(const std::vector<dvec3> &origVe
 
 void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
 {
-    const FacetMesh origTriMesh = facetMesh; 
+    const FacetMesh origFacetMesh = facetMesh; 
 
     std::unordered_map<uint32_t, std::vector<uint32_t>> segsIntersectedAtVertMap;
-    for (size_t i = 0; i < origTriMesh.segmentIndices.size(); i++) {
-        for (size_t j = 0; j < origTriMesh.segmentIndices.size(); j++) {
+    for (size_t i = 0; i < origFacetMesh.segmentIndices.size(); i++) {
+        for (size_t j = 0; j < origFacetMesh.segmentIndices.size(); j++) {
             if (i == j) continue;
 
             struct SegmentIntersectInfo {
@@ -339,13 +339,13 @@ void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
             };
             std::array<SegmentIntersectInfo, 4> segmentIntersectInfos = {SegmentIntersectInfo{false, false}, {true, false}, {false, true}, {true, true}};
             for (SegmentIntersectInfo segIntInf : segmentIntersectInfos) {
-                const uint32_t segment1startIdx = segIntInf.segment1isReverseOrder ? origTriMesh.segmentIndices[i].y : origTriMesh.segmentIndices[i].x;
-                const uint32_t segment2startIdx = segIntInf.segment2isReverseOrder ? origTriMesh.segmentIndices[j].y : origTriMesh.segmentIndices[j].x;
+                const uint32_t segment1startIdx = segIntInf.segment1isReverseOrder ? origFacetMesh.segmentIndices[i].y : origFacetMesh.segmentIndices[i].x;
+                const uint32_t segment2startIdx = segIntInf.segment2isReverseOrder ? origFacetMesh.segmentIndices[j].y : origFacetMesh.segmentIndices[j].x;
                 if (segment1startIdx == segment2startIdx) {
-                    const uint32_t segment1endIdx = segIntInf.segment1isReverseOrder ? origTriMesh.segmentIndices[i].x : origTriMesh.segmentIndices[i].y;
-                    const uint32_t segment2endIdx = segIntInf.segment2isReverseOrder ? origTriMesh.segmentIndices[j].x : origTriMesh.segmentIndices[j].y;
-                    const dvec3 seg1dir = origTriMesh.verts[segment1endIdx] - origTriMesh.verts[segment1startIdx];
-                    const dvec3 seg2dir = origTriMesh.verts[segment2endIdx] - origTriMesh.verts[segment2startIdx];
+                    const uint32_t segment1endIdx = segIntInf.segment1isReverseOrder ? origFacetMesh.segmentIndices[i].x : origFacetMesh.segmentIndices[i].y;
+                    const uint32_t segment2endIdx = segIntInf.segment2isReverseOrder ? origFacetMesh.segmentIndices[j].x : origFacetMesh.segmentIndices[j].y;
+                    const dvec3 seg1dir = origFacetMesh.verts[segment1endIdx] - origFacetMesh.verts[segment1startIdx];
+                    const dvec3 seg2dir = origFacetMesh.verts[segment2endIdx] - origFacetMesh.verts[segment2startIdx];
                     if (glm::dot(seg1dir, seg2dir) > 0.0) segsIntersectedAtVertMap[segment1startIdx].push_back(i);
                     break;
                 }
@@ -354,65 +354,60 @@ void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
     }
 
     std::function<void(uint32_t, uint32_t)> insertVertexInTheMiddleOfSegmentToAllRelevantFacets = [&](uint32_t segmentIdx, uint32_t vertexIdx) {
-        bool foundMatchingFacet = false;
         for (size_t i = 0; i < facetMesh.facetIndices.size(); i++) {
             std::vector<uint32_t> &facetIndices = facetMesh.facetIndices[i];
             bool foundStart = false;
             bool foundEnd = false;
             for (uint32_t facetIdx : facetIndices) {
-                if (origTriMesh.segmentIndices[segmentIdx].x == facetIdx) foundStart = true;
-                if (origTriMesh.segmentIndices[segmentIdx].y == facetIdx) foundEnd = true;
+                if (facetMesh.segmentIndices[segmentIdx].x == facetIdx) foundStart = true;
+                if (facetMesh.segmentIndices[segmentIdx].y == facetIdx) foundEnd = true;
                 if (foundStart && foundEnd) break;
             }
             if (foundStart && foundEnd) {
                 facetIndices.push_back(vertexIdx);
-                facetMesh.facetSegments[i].emplace_back(glm::uvec2{origTriMesh.segmentIndices[segmentIdx].x, vertexIdx});
-                facetMesh.facetSegments[i].emplace_back(glm::uvec2{origTriMesh.segmentIndices[segmentIdx].y, vertexIdx});
-                foundMatchingFacet = true;
+                for (size_t j = 0; j < facetMesh.facetSegments[i].size(); j++) if (facetMesh.facetSegments[i][j].x == facetMesh.segmentIndices[segmentIdx].x && facetMesh.facetSegments[i][j].y == facetMesh.segmentIndices[segmentIdx].y) facetMesh.facetSegments[i].erase(facetMesh.facetSegments[i].begin() + j);
+                facetMesh.facetSegments[i].emplace_back(glm::uvec2{facetMesh.segmentIndices[segmentIdx].x, vertexIdx});
+                facetMesh.facetSegments[i].emplace_back(glm::uvec2{facetMesh.segmentIndices[segmentIdx].y, vertexIdx});
             }
-        }
-        if (!foundMatchingFacet) {
-            facetMesh.facetIndices.emplace_back(std::vector<uint32_t>{origTriMesh.segmentIndices[segmentIdx].x, origTriMesh.segmentIndices[segmentIdx].y, vertexIdx});
-            facetMesh.facetSegments.emplace_back(std::vector<glm::uvec2>{{origTriMesh.segmentIndices[segmentIdx].x, vertexIdx}, {origTriMesh.segmentIndices[segmentIdx].x, vertexIdx}});
         }
     };
 
     for (const std::pair<const uint32_t, std::vector<uint32_t>> &vertIntSegs : segsIntersectedAtVertMap) {
         double dstToNearestVert = std::numeric_limits<double>::max();
-        for (size_t k = 0; k < origTriMesh.verts.size(); k++) {
+        for (size_t k = 0; k < origFacetMesh.verts.size(); k++) {
             if (vertIntSegs.first == k) continue;
-            dstToNearestVert = std::min(dstToNearestVert, glm::distance(origTriMesh.verts[k], origTriMesh.verts[vertIntSegs.first]));
+            dstToNearestVert = std::min(dstToNearestVert, glm::distance(origFacetMesh.verts[k], origFacetMesh.verts[vertIntSegs.first]));
         }
         double localFeatureSize = dstToNearestVert;
-        for (glm::uvec2 seg : origTriMesh.segmentIndices) {
+        for (glm::uvec2 seg : origFacetMesh.segmentIndices) {
             if (vertIntSegs.first == seg.x || vertIntSegs.first == seg.y) continue;
-            const dvec3 &a = origTriMesh.verts[vertIntSegs.first];
-            const dvec3 &b = origTriMesh.verts[seg.x];
-            const dvec3 &c = origTriMesh.verts[seg.y];
+            const dvec3 &a = origFacetMesh.verts[vertIntSegs.first];
+            const dvec3 &b = origFacetMesh.verts[seg.x];
+            const dvec3 &c = origFacetMesh.verts[seg.y];
             const double dstToSeg = glm::length(glm::cross(a - b, a - c)) / glm::length(c - b);
             localFeatureSize = std::min(localFeatureSize, dstToSeg);
         }
 
         double shortestSegLength = std::numeric_limits<double>::max();
         for (uint32_t seg : vertIntSegs.second) shortestSegLength = std::min(shortestSegLength,
-                glm::distance(origTriMesh.verts[origTriMesh.segmentIndices[seg].x], origTriMesh.verts[origTriMesh.segmentIndices[seg].y]));
+                glm::distance(origFacetMesh.verts[origFacetMesh.segmentIndices[seg].x], origFacetMesh.verts[origFacetMesh.segmentIndices[seg].y]));
 
         const double radius = std::min(localFeatureSize, shortestSegLength / 3.0);
         for (uint32_t seg : vertIntSegs.second) {
-            assert(origTriMesh.segmentIndices[seg].x == vertIntSegs.first || origTriMesh.segmentIndices[seg].y == vertIntSegs.first);
+            assert(origFacetMesh.segmentIndices[seg].x == vertIntSegs.first || origFacetMesh.segmentIndices[seg].y == vertIntSegs.first);
 
             insertVertexInTheMiddleOfSegmentToAllRelevantFacets(seg, facetMesh.verts.size());
 
-            if (vertIntSegs.first == origTriMesh.segmentIndices[seg].x) {
-                facetMesh.segmentIndices.emplace_back(glm::uvec2{origTriMesh.segmentIndices[seg].x, facetMesh.verts.size()});
+            if (vertIntSegs.first == origFacetMesh.segmentIndices[seg].x) {
+                facetMesh.segmentIndices.emplace_back(glm::uvec2{origFacetMesh.segmentIndices[seg].x, facetMesh.verts.size()});
                 facetMesh.segmentIndices[seg].x = facetMesh.verts.size();
-                const dvec3 segDir = glm::normalize(origTriMesh.verts[origTriMesh.segmentIndices[seg].y] - origTriMesh.verts[vertIntSegs.first]);
-                facetMesh.verts.push_back(origTriMesh.verts[vertIntSegs.first] + segDir * radius);
+                const dvec3 segDir = glm::normalize(origFacetMesh.verts[origFacetMesh.segmentIndices[seg].y] - origFacetMesh.verts[vertIntSegs.first]);
+                facetMesh.verts.push_back(origFacetMesh.verts[vertIntSegs.first] + segDir * radius);
             } else {
-                facetMesh.segmentIndices.emplace_back(glm::uvec2{origTriMesh.segmentIndices[seg].y, facetMesh.verts.size()});
+                facetMesh.segmentIndices.emplace_back(glm::uvec2{origFacetMesh.segmentIndices[seg].y, facetMesh.verts.size()});
                 facetMesh.segmentIndices[seg].y = facetMesh.verts.size();
-                const dvec3 segDir = glm::normalize(origTriMesh.verts[origTriMesh.segmentIndices[seg].x] - origTriMesh.verts[vertIntSegs.first]);
-                facetMesh.verts.push_back(origTriMesh.verts[vertIntSegs.first] + segDir * radius);
+                const dvec3 segDir = glm::normalize(origFacetMesh.verts[origFacetMesh.segmentIndices[seg].x] - origFacetMesh.verts[vertIntSegs.first]);
+                facetMesh.verts.push_back(origFacetMesh.verts[vertIntSegs.first] + segDir * radius);
             }
 
             tetMesh.verts.push_back(facetMesh.verts[facetMesh.verts.size() - 1]);
@@ -423,10 +418,12 @@ void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
     std::unordered_set<uint32_t> segmentsToSplit;
     for (uint32_t i = 0; i < facetMesh.segmentIndices.size(); i++) segmentsToSplit.insert(i);
     while (segmentsToSplit.size() > 0) {
+        constexpr double minSplitLength = 0.005;
         const std::unordered_set<uint64_t> uniqueTetrahedronSegments = getUniqueTetrahedronSegments(tetMesh);
         for (auto it = segmentsToSplit.begin(); it != segmentsToSplit.end();) {
             const uint32_t idx = *it;
-            if (uniqueTetrahedronSegments.find(std::bit_cast<uint64_t>(facetMesh.segmentIndices[idx])) == uniqueTetrahedronSegments.end()) {
+            if (uniqueTetrahedronSegments.find(std::bit_cast<uint64_t>(facetMesh.segmentIndices[idx])) == uniqueTetrahedronSegments.end()
+                    || glm::distance(facetMesh.verts[facetMesh.segmentIndices[idx].x], facetMesh.verts[facetMesh.segmentIndices[idx].y]) < minSplitLength) {
                 it = segmentsToSplit.erase(it);
                 continue;
             }
@@ -448,11 +445,12 @@ void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
 
 TetralizationResults tetralizeMesh(const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
 {
-    FacetMesh facetMesh = getFacetMeshFromGltfMesh(scene, mesh);
+    const FacetMesh origFacetMesh = getFacetMeshFromGltfMesh(scene, mesh);
+    FacetMesh facetMesh = origFacetMesh;
     TetrahedronMesh convexTetMesh = createConvexHullTetrahedralMesh(facetMesh.verts);
-    //edgeProtectTetrahedronMesh(convexTetMesh, facetMesh);
+    edgeProtectTetrahedronMesh(convexTetMesh, facetMesh);
 
-    std::cout << countMissingSegments(facetMesh, convexTetMesh) << " segments out of " << facetMesh.segmentIndices.size() << " are missing from tetrahedralization\n"; 
+    std::cout << countMissingSegments(origFacetMesh, convexTetMesh) << " segments out of " << facetMesh.segmentIndices.size() << " are missing from tetrahedralization\n"; 
     std::cout << countNonDelaunayTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " break the delaunay condition\n";
     std::cout << countFlatTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " are flat\n";
     std::cout << facetMesh.facetIndices.size() << "\n";
