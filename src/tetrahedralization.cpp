@@ -26,7 +26,6 @@ FacetMesh getFacetMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoade
         if (unique) uniqueVertexIndices.push_back(i);
         meshVertToUniqueVertMap[i] = uniqueVert;
     }
-
     facetMesh.verts.reserve(uniqueVertexIndices.size());
     for (size_t i = 0; i < uniqueVertexIndices.size(); i++) facetMesh.verts.push_back(scene.vertices[uniqueVertexIndices[i] + mesh.vertexOffset]);
 
@@ -41,7 +40,7 @@ FacetMesh getFacetMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoade
                 meshVertToUniqueVertMap.at(scene.indices[i + 2])};
         const dvec3 normal = glm::normalize(glm::cross(facetMesh.verts[triIdxs[1]] - facetMesh.verts[triIdxs[0]],
                     facetMesh.verts[triIdxs[2]] - facetMesh.verts[triIdxs[0]]));
-        const glm::dvec4 abcd(normal, -glm::dot(normal, facetMesh.verts[triIdxs[0]]));
+        if (triIdxs[0] == triIdxs[1] || triIdxs[0] == triIdxs[2] || triIdxs[1] == triIdxs[2]) continue;
 
         std::function<void(const std::array<uint32_t, 3> &)> insertTriIdxs = [&encounteredSegments](const std::array<uint32_t, 3> &triIdxs) {
             encounteredSegments[encounteredSegments.size() - 1].emplace_back(glm::uvec2{triIdxs[0], triIdxs[1]});
@@ -62,9 +61,12 @@ FacetMesh getFacetMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoade
                 meshVertToUniqueVertMap.at(scene.indices[*it + 1]), meshVertToUniqueVertMap.at(scene.indices[*it + 2])};
             const dvec3 testNormal = glm::normalize(glm::cross(facetMesh.verts[testTriIdxs[1]] - facetMesh.verts[testTriIdxs[0]],
                         facetMesh.verts[testTriIdxs[2]] - facetMesh.verts[testTriIdxs[0]]));
-            const glm::dvec4 testAbcd(testNormal, -glm::dot(testNormal, facetMesh.verts[testTriIdxs[0]]));
-            constexpr double epsilon = 0.0001;
-            if (glm::distance(abcd, testAbcd) < epsilon || glm::distance(abcd, -testAbcd) < epsilon) {
+            if (testTriIdxs[0] == testTriIdxs[1] || testTriIdxs[0] == testTriIdxs[2] || testTriIdxs[1] == testTriIdxs[2]) {
+                it = untestedTriangles.erase(it);
+                continue;
+            }
+            constexpr double epsilon = 0.0003;
+            if (glm::abs(glm::abs(glm::dot(normal, testNormal)) - 1.0) < epsilon) {
                 insertTriIdxs(testTriIdxs);
                 it = untestedTriangles.erase(it);
                 continue;
@@ -73,7 +75,6 @@ FacetMesh getFacetMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoade
         }
     }
 
-    facetMesh.facetSegments.clear();
     std::unordered_map<uint32_t, std::vector<uint32_t>> connectionGraph;
     std::unordered_set<uint32_t> toDoSet;
     std::unordered_set<uint32_t> doneSet;

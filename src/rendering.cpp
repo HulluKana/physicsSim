@@ -287,6 +287,7 @@ RenderResult render(vul::Vulkano &vulkano, RenderingResources &renderingResource
             for (int i = 0; i < facetIndex; i++) fistIndex += obj.facetSegments[i].size();
             vulkano.renderDatas[4].drawDatas[0].firstIndex = fistIndex * 2;
             vulkano.renderDatas[4].drawDatas[0].indexCount = obj.facetSegments[facetIndex].size() * 2;
+            ImGui::Text("Facet segment count: %u", vulkano.renderDatas[4].drawDatas[0].indexCount / 2);
         } else {
             vulkano.renderDatas[4].drawDatas[0].firstIndex = 0;
             vulkano.renderDatas[4].drawDatas[0].indexCount = maxFacetIndexCount;
