@@ -1,3 +1,5 @@
+#include <cassert>
+#include <glm/geometric.hpp>
 #include <tetrahedralization.hpp>
 
 #include <unordered_map>
@@ -140,7 +142,6 @@ FacetMesh getFacetMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoade
     for (size_t i = 0; i < uniqueFacetIndices.size(); i++) {
         for (uint32_t idx : uniqueFacetIndices[i]) facetMesh.facetIndices[i].push_back(idx);
     }
-    std::cout << facetMesh.facetIndices.size() << "\n";
 
     return facetMesh;
 }
@@ -162,7 +163,7 @@ dvec3 tetrahedronCircumcenter(const TetrahedronIndices &tet, const std::vector<d
 bool isPointInsideTetrahedron(const dvec3 &point, const TetrahedronIndices &tet, const std::vector<dvec3> &verts)
 {
     const dvec3 circumCenter = tetrahedronCircumcenter(tet, verts);
-    return glm::distance(point, circumCenter) <  glm::distance(verts[tet.a], circumCenter); 
+    return glm::distance(point, circumCenter) < glm::distance(verts[tet.a], circumCenter); 
 }
 
 std::unordered_set<uint64_t> getUniqueTetrahedronSegments(const TetrahedronMesh &tetMesh)
@@ -400,7 +401,8 @@ void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
 
             if (vertIntSegs.first == origFacetMesh.segmentIndices[seg].x) {
                 facetMesh.segmentIndices.emplace_back(glm::uvec2{origFacetMesh.segmentIndices[seg].x, facetMesh.verts.size()});
-                facetMesh.segmentIndices[seg].x = facetMesh.verts.size();
+                facetMesh.segmentIndices[seg].x = facetMesh.segmentIndices[seg].y;
+                facetMesh.segmentIndices[seg].y = facetMesh.verts.size();
                 const dvec3 segDir = glm::normalize(origFacetMesh.verts[origFacetMesh.segmentIndices[seg].y] - origFacetMesh.verts[vertIntSegs.first]);
                 facetMesh.verts.push_back(origFacetMesh.verts[vertIntSegs.first] + segDir * radius);
             } else {
@@ -418,29 +420,80 @@ void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
     std::unordered_set<uint32_t> segmentsToSplit;
     for (uint32_t i = 0; i < facetMesh.segmentIndices.size(); i++) segmentsToSplit.insert(i);
     while (segmentsToSplit.size() > 0) {
-        constexpr double minSplitLength = 0.005;
-        const std::unordered_set<uint64_t> uniqueTetrahedronSegments = getUniqueTetrahedronSegments(tetMesh);
         for (auto it = segmentsToSplit.begin(); it != segmentsToSplit.end();) {
+            constexpr double segmentMinLength = 0.02;
+            const std::unordered_set<uint64_t> uniqueTetrahedronSegments = getUniqueTetrahedronSegments(tetMesh);
             const uint32_t idx = *it;
-            if (uniqueTetrahedronSegments.find(std::bit_cast<uint64_t>(facetMesh.segmentIndices[idx])) == uniqueTetrahedronSegments.end()
-                    || glm::distance(facetMesh.verts[facetMesh.segmentIndices[idx].x], facetMesh.verts[facetMesh.segmentIndices[idx].y]) < minSplitLength) {
+            if (uniqueTetrahedronSegments.find(std::bit_cast<uint64_t>(facetMesh.segmentIndices[idx])) != uniqueTetrahedronSegments.end()
+                    || glm::distance(facetMesh.verts[facetMesh.segmentIndices[idx].x], facetMesh.verts[facetMesh.segmentIndices[idx].y]) < segmentMinLength) {
                 it = segmentsToSplit.erase(it);
                 continue;
             }
 
             insertVertexInTheMiddleOfSegmentToAllRelevantFacets(idx, facetMesh.verts.size());
 
-            facetMesh.verts.push_back(facetMesh.verts[facetMesh.segmentIndices[idx].x] +
-                    (facetMesh.verts[facetMesh.segmentIndices[idx].y] - facetMesh.verts[facetMesh.segmentIndices[idx].x]) / 2.0);
+            facetMesh.verts.push_back((facetMesh.verts[facetMesh.segmentIndices[idx].x] + facetMesh.verts[facetMesh.segmentIndices[idx].y]) / 2.0);
             tetMesh.verts.push_back(facetMesh.verts[facetMesh.verts.size() - 1]);
             insertVertexToTetrahedralizedMesh(tetMesh, tetMesh.verts.size() - 1);
-            facetMesh.segmentIndices.emplace_back(glm::uvec2{facetMesh.segmentIndices[idx].x, facetMesh.verts.size() - 1});
-            facetMesh.segmentIndices[idx].x = facetMesh.verts.size() - 1;
+            facetMesh.segmentIndices.emplace_back(glm::uvec2{facetMesh.segmentIndices[idx].y, facetMesh.verts.size() - 1});
+            facetMesh.segmentIndices[idx].y = facetMesh.verts.size() - 1;
             segmentsToSplit.insert(facetMesh.segmentIndices.size() - 1);
-
-            it++;
         }
     }
+}
+
+void deleteUnnecessaryTetrahedrons(TetrahedronMesh &tetMesh, const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
+{
+    std::vector<uint32_t> tetIdxsToRemove;
+    for (size_t i = 0; i < tetMesh.tets.size(); i++) {
+        const TetrahedronIndices &tet = tetMesh.tets[i];
+        const dvec3 centroid = (tetMesh.verts[tet.a] + tetMesh.verts[tet.b] + tetMesh.verts[tet.c] + tetMesh.verts[tet.d]) / 4.0;
+        std::array<dvec3, 4> rays = {(tetMesh.verts[tet.a] + tetMesh.verts[tet.b] + tetMesh.verts[tet.c]) / 3.0,
+            (tetMesh.verts[tet.a] + tetMesh.verts[tet.b] + tetMesh.verts[tet.d]) / 3.0, (tetMesh.verts[tet.b] + tetMesh.verts[tet.c]
+            + tetMesh.verts[tet.d]) / 3.0, (tetMesh.verts[tet.a] + tetMesh.verts[tet.c] + tetMesh.verts[tet.d]) / 3.0};
+        for (dvec3 &ray : rays) {
+            ray = glm::normalize(ray - centroid);
+            double minDst = std::numeric_limits<double>::max();
+            dvec3 closestTriangleNormal;
+            bool foundIntersection = false;
+            for (size_t j = mesh.firstIndex; j < mesh.firstIndex + mesh.indexCount; j += 3) {
+                // Ray-triangle intersection code from
+                // https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm
+                constexpr double epsilon = std::numeric_limits<double>::epsilon();
+
+                const dvec3 a = scene.vertices[scene.indices[j] + mesh.vertexOffset];
+                const dvec3 b = scene.vertices[scene.indices[j + 1] + mesh.vertexOffset];
+                const dvec3 c = scene.vertices[scene.indices[j + 2] + mesh.vertexOffset];
+
+                const dvec3 edge1 = b - a;
+                const dvec3 edge2 = c - a;
+                const dvec3 rayCrossEdge2 = glm::cross(ray, edge2);
+                const double det = glm::dot(edge1, rayCrossEdge2);
+                if (det > -epsilon && det < epsilon) continue;
+
+                const double invDet = 1.0 / det;
+                const dvec3 s = centroid - a;
+                const double u = invDet * glm::dot(s, rayCrossEdge2);
+                if (u < 0.0 || u > 1.0) continue;
+
+                const dvec3 sCrossEdge1 = glm::cross(s, edge1);
+                const double v = invDet * glm::dot(ray, sCrossEdge1);
+                if (v < 0.0 || u + v > 1.0) continue;
+
+                const double dst = invDet * glm::dot(edge2, sCrossEdge1);
+                if (dst > epsilon && dst < minDst) {
+                    minDst = dst;
+                    closestTriangleNormal = glm::normalize(glm::cross(b - a, c - a));
+                    foundIntersection = true;
+                }
+            }
+            if (!foundIntersection || glm::dot(ray, closestTriangleNormal) <= 0.0) {
+                tetIdxsToRemove.push_back(i);
+                break;
+            }
+        }
+    }
+    for (auto it = tetIdxsToRemove.rbegin(); it < tetIdxsToRemove.rend(); it++) tetMesh.tets.erase(tetMesh.tets.begin() + *it);
 }
 
 TetralizationResults tetralizeMesh(const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
@@ -449,11 +502,11 @@ TetralizationResults tetralizeMesh(const vul::Scene &scene, const vul::GltfLoade
     FacetMesh facetMesh = origFacetMesh;
     TetrahedronMesh convexTetMesh = createConvexHullTetrahedralMesh(facetMesh.verts);
     edgeProtectTetrahedronMesh(convexTetMesh, facetMesh);
+    deleteUnnecessaryTetrahedrons(convexTetMesh, scene, mesh);
 
-    std::cout << countMissingSegments(origFacetMesh, convexTetMesh) << " segments out of " << facetMesh.segmentIndices.size() << " are missing from tetrahedralization\n"; 
-    std::cout << countNonDelaunayTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " break the delaunay condition\n";
-    std::cout << countFlatTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " are flat\n";
-    std::cout << facetMesh.facetIndices.size() << "\n";
+    //std::cout << countMissingSegments(facetMesh, convexTetMesh) << " segments out of " << facetMesh.segmentIndices.size() << " are missing from tetrahedralization\n"; 
+    //std::cout << countNonDelaunayTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " break the delaunay condition\n";
+    //std::cout << countFlatTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " are flat\n";
 
     return TetralizationResults{convexTetMesh, facetMesh};
 }

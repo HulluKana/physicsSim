@@ -18,7 +18,7 @@ int main()
     renderingResources.timeSpeed = 1.0;
     renderingResources.simulate = false;
     renderingResources.drawIndividualTetrahedrons = false;
-    Obj origObj = getObjFromScene(vulkano.scene, "Wheel");
+    Obj origObj = getObjFromScene(vulkano.scene, "Cannon");
     Obj obj = origObj;
     getRenderingStuffFromObj(renderingResources, obj, vulkano);
     while (true) {
