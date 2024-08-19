@@ -19,6 +19,7 @@ struct FacetMesh {
     std::vector<glm::uvec2> segmentIndices;
     std::vector<std::vector<uint32_t>> facetIndices;
     std::vector<std::vector<glm::uvec2>> facetSegments;
+    std::vector<std::vector<glm::uvec3>> facetTriangles;
 };
 struct TetralizationResults {
     TetrahedronMesh tetMesh;

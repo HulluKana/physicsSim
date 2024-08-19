@@ -1,5 +1,8 @@
 #include <cassert>
+#include <glm/common.hpp>
+#include <glm/ext/scalar_constants.hpp>
 #include <glm/geometric.hpp>
+#include <limits>
 #include <tetrahedralization.hpp>
 
 #include <unordered_map>
@@ -34,20 +37,25 @@ FacetMesh getFacetMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoade
     std::unordered_set<uint32_t> untestedTriangles;
     for (uint32_t i = mesh.firstIndex; i < mesh.firstIndex + mesh.indexCount; i += 3) untestedTriangles.insert(i);
     std::vector<std::vector<glm::uvec2>> encounteredSegments;
+    std::vector<std::vector<glm::uvec3>> encounteredTriangles;
     for (uint32_t i = mesh.firstIndex; i < mesh.firstIndex + mesh.indexCount; i += 3) {
         if (untestedTriangles.find(i) == untestedTriangles.end()) continue;
         untestedTriangles.erase(i);
         encounteredSegments.emplace_back(std::vector<glm::uvec2>{});
+        encounteredTriangles.emplace_back(std::vector<glm::uvec3>{});
         const std::array<uint32_t, 3> triIdxs = {meshVertToUniqueVertMap.at(scene.indices[i]), meshVertToUniqueVertMap.at(scene.indices[i + 1]),
                 meshVertToUniqueVertMap.at(scene.indices[i + 2])};
         const dvec3 normal = glm::normalize(glm::cross(facetMesh.verts[triIdxs[1]] - facetMesh.verts[triIdxs[0]],
                     facetMesh.verts[triIdxs[2]] - facetMesh.verts[triIdxs[0]]));
         if (triIdxs[0] == triIdxs[1] || triIdxs[0] == triIdxs[2] || triIdxs[1] == triIdxs[2]) continue;
 
-        std::function<void(const std::array<uint32_t, 3> &)> insertTriIdxs = [&encounteredSegments](const std::array<uint32_t, 3> &triIdxs) {
+        std::function<void(const std::array<uint32_t, 3> &)> insertTriIdxs = [&encounteredSegments, &encounteredTriangles]
+            (const std::array<uint32_t, 3> &triIdxs) {
+
             encounteredSegments[encounteredSegments.size() - 1].emplace_back(glm::uvec2{triIdxs[0], triIdxs[1]});
             encounteredSegments[encounteredSegments.size() - 1].emplace_back(glm::uvec2{triIdxs[0], triIdxs[2]});
             encounteredSegments[encounteredSegments.size() - 1].emplace_back(glm::uvec2{triIdxs[1], triIdxs[2]});
+            encounteredTriangles[encounteredTriangles.size() - 1].emplace_back(glm::uvec3{triIdxs[0], triIdxs[1], triIdxs[2]});
             for (size_t k = encounteredSegments[encounteredSegments.size() - 1].size() - 3; k < encounteredSegments[encounteredSegments.size() - 1].size(); k++) {
                 if (encounteredSegments[encounteredSegments.size() - 1][k].x > encounteredSegments[encounteredSegments.size() - 1][k].y) {
                     const uint32_t temp = encounteredSegments[encounteredSegments.size() - 1][k].x;
@@ -80,6 +88,7 @@ FacetMesh getFacetMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoade
     std::unordered_map<uint32_t, std::vector<uint32_t>> connectionGraph;
     std::unordered_set<uint32_t> toDoSet;
     std::unordered_set<uint32_t> doneSet;
+    assert(encounteredSegments.size() == encounteredTriangles.size());
     for (const std::vector<glm::uvec2> &segments : encounteredSegments) {
         connectionGraph.clear();
         for (glm::uvec2 segment : segments) {
@@ -111,6 +120,44 @@ FacetMesh getFacetMeshFromGltfMesh(const vul::Scene &scene, const vul::GltfLoade
                 }
             }
             if (!segmentIsConnected) facetMesh.facetSegments.emplace_back(std::vector<glm::uvec2>{segments[i]});
+        }
+    }
+
+    for (const std::vector<glm::uvec3> &triangles : encounteredTriangles) {
+        connectionGraph.clear();
+        for (glm::uvec3 triangle : triangles) {
+            connectionGraph[triangle.x].push_back(triangle.y);
+            connectionGraph[triangle.x].push_back(triangle.z);
+            connectionGraph[triangle.y].push_back(triangle.x);
+            connectionGraph[triangle.y].push_back(triangle.z);
+            connectionGraph[triangle.z].push_back(triangle.x);
+            connectionGraph[triangle.z].push_back(triangle.y);
+        }
+
+        size_t subFacetStartIdx = facetMesh.facetTriangles.size();
+        facetMesh.facetTriangles.emplace_back(std::vector<glm::uvec3>{triangles[0]});
+        for (size_t i = 1; i < triangles.size(); i++) {
+            doneSet.clear();
+            toDoSet.clear();
+            toDoSet.insert(triangles[i].x);
+            bool triangleIsConnected = false;
+            while (!toDoSet.empty() && !triangleIsConnected) {
+                const uint32_t vert = *toDoSet.begin();
+                toDoSet.erase(toDoSet.begin());
+                doneSet.insert(vert);
+                for (uint32_t reachableVert : connectionGraph[vert]) {
+                    for (size_t j = subFacetStartIdx; j < facetMesh.facetTriangles.size(); j++) {
+                        if (reachableVert == facetMesh.facetTriangles[j][0].x) {
+                            facetMesh.facetTriangles[j].push_back(triangles[i]);
+                            triangleIsConnected = true;
+                            break;
+                        }
+                    }
+                    if (triangleIsConnected) break;
+                    if (doneSet.find(reachableVert) == doneSet.end()) toDoSet.insert(reachableVert);
+                }
+            }
+            if (!triangleIsConnected) facetMesh.facetTriangles.emplace_back(std::vector<glm::uvec3>{triangles[i]});
         }
     }
 
@@ -442,6 +489,209 @@ void edgeProtectTetrahedronMesh(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
     }
 }
 
+struct IntersectionResults {
+    bool intersects;
+    double intersectionDistance;
+};
+IntersectionResults rayTriangleIntersection(const dvec3 &ray, const dvec3 &origin, const dvec3 &a, const dvec3 &b, const dvec3 &c)
+{
+    // Ray-triangle intersection code from
+    // https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm
+    IntersectionResults results;
+    results.intersects = false;
+    results.intersectionDistance = std::numeric_limits<double>::max();
+    constexpr double epsilon = std::numeric_limits<double>::epsilon();
+
+    //const dvec3 a = scene.vertices[scene.indices[j] + mesh.vertexOffset];
+    //const dvec3 b = scene.vertices[scene.indices[j + 1] + mesh.vertexOffset];
+    //const dvec3 c = scene.vertices[scene.indices[j + 2] + mesh.vertexOffset];
+
+    const dvec3 edge1 = b - a;
+    const dvec3 edge2 = c - a;
+    const dvec3 rayCrossEdge2 = glm::cross(ray, edge2);
+    const double det = glm::dot(edge1, rayCrossEdge2);
+    if (det > -epsilon && det < epsilon) return results;
+
+    const double invDet = 1.0 / det;
+    const dvec3 s = origin - a;
+    const double u = invDet * glm::dot(s, rayCrossEdge2);
+    if (u < 0.0 || u > 1.0) return results;
+
+    const dvec3 sCrossEdge1 = glm::cross(s, edge1);
+    const double v = invDet * glm::dot(ray, sCrossEdge1);
+    if (v < 0.0 || u + v > 1.0) return results;
+
+    const double dst = invDet * glm::dot(edge2, sCrossEdge1);
+    if (dst > epsilon) {
+        results.intersects = true;
+        results.intersectionDistance = dst;
+    }
+    return results;
+}
+
+inline void hashCombine(std::size_t& seed) { }
+template <typename T, typename... Rest>
+inline void hashCombine(std::size_t& seed, const T& v, Rest... rest) {
+    std::hash<T> hasher;
+    seed ^= hasher(v) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+    hashCombine(seed, rest...);
+}
+
+void recoverFacets(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
+{
+    struct Face {
+        uint32_t a;
+        uint32_t b;
+        uint32_t c;
+        bool reverseNormal;
+    };
+    std::vector<TetrahedronIndices> removedTets;
+    std::vector<glm::uvec3> removedTriangles;
+    std::vector<glm::uvec3> uniqueRemovedTriangles;
+    std::vector<std::vector<glm::uvec3>> cavities;
+    std::unordered_map<uint64_t, Face> unfinishedFaces;
+    for (const std::vector<glm::uvec3> &triangles : facetMesh.facetTriangles) {
+        assert(triangles.size() > 0);
+        removedTets.clear();
+        tetMesh.tets.erase(std::remove_if(tetMesh.tets.begin(), tetMesh.tets.end(), [&](const TetrahedronIndices &tet) {
+            const std::array<glm::uvec2, 6> lines = {glm::uvec2{tet.a, tet.b}, {tet.a, tet.c},
+                {tet.a, tet.d}, {tet.b, tet.c}, {tet.b, tet.d}, {tet.c, tet.d}};
+            bool intersects = false;
+            for (glm::uvec2 line : lines) {
+                const dvec3 origin = tetMesh.verts[line.x];
+                const dvec3 ray = glm::normalize(tetMesh.verts[line.y] - origin);
+                for (const glm::uvec3 &tri : triangles) {
+                    const dvec3 &a = facetMesh.verts[tri.x];
+                    const dvec3 &b = facetMesh.verts[tri.y];
+                    const dvec3 &c = facetMesh.verts[tri.z];
+                    IntersectionResults intersectionResults = rayTriangleIntersection(ray, origin, a, b, c);
+                    constexpr double epsilon = 0.00001;
+                    if (intersectionResults.intersects && intersectionResults.intersectionDistance <
+                            glm::length(tetMesh.verts[line.y] - origin) - epsilon) {
+                        intersects = true;
+                        removedTets.push_back(tet);
+                        break;
+                    }
+                }
+            }
+            return intersects;
+        }), tetMesh.tets.end());
+
+        // The cavity splitter will only create one cavity per side and segments intersecting the facets are treated as if they don't. Fix those
+        removedTriangles.clear(); 
+        for (const TetrahedronIndices &tet : removedTets) {
+            removedTriangles.emplace_back(glm::uvec3{tet.a, tet.b, tet.c});
+            removedTriangles.emplace_back(glm::uvec3{tet.a, tet.b, tet.d});
+            removedTriangles.emplace_back(glm::uvec3{tet.a, tet.c, tet.d});
+            removedTriangles.emplace_back(glm::uvec3{tet.b, tet.c, tet.d});
+        }
+        uniqueRemovedTriangles.clear();
+        for (const glm::uvec3 &tri : removedTriangles) {
+            size_t triCount = std::count_if(removedTriangles.begin(), removedTriangles.end(), [&tri](const glm::uvec3 &uTri){
+                return (tri.x == uTri.x || tri.x == uTri.y || tri.x == uTri.z) && (tri.y == uTri.x || tri.y == uTri.y
+                        || tri.y == uTri.z) && (tri.z == uTri.x || tri.z == uTri.y || tri.z == uTri.z);
+            });
+            assert(triCount > 0);
+            if (triCount == 1) uniqueRemovedTriangles.push_back(tri);
+        }
+
+        cavities.clear();
+        cavities.emplace_back(std::vector<glm::uvec3>{});
+        cavities.emplace_back(std::vector<glm::uvec3>{});
+        for (uint32_t i = 0; i < 2; i++) {
+            const dvec3 normal = glm::normalize(glm::cross(facetMesh.verts[triangles[0].z] - facetMesh.verts[triangles[0].x],
+                    facetMesh.verts[triangles[0].y] - facetMesh.verts[triangles[0].x])) * (i == 0 ? 1.0 : -1.0);
+            for (const glm::uvec3 &tri : uniqueRemovedTriangles) {
+                /*
+                //Uncomment this if you dont trust my shady shenanigans
+
+                const std::array<glm::uvec2, 3> lines = {glm::uvec2{tri.x, tri.y}, {tri.x, tri.z}, {tri.y, tri.z}};
+                bool intersects = false;
+                for (glm::uvec2 line : lines) {
+                    constexpr double epsilon = 0.00001;
+
+                    const dvec3 origin = tetMesh.verts[line.x];
+                    const dvec3 ray = glm::normalize(tetMesh.verts[line.y] - origin);
+                    for (const glm::uvec3 &testTri : triangles) {
+                        const dvec3 a = facetMesh.verts[testTri.x];
+                        const dvec3 b = facetMesh.verts[testTri.y];
+                        const dvec3 c = facetMesh.verts[testTri.z];
+                        IntersectionResults intersectionResults = rayTriangleIntersection(ray, origin, a, b, c);
+                        assert(!intersectionResults.intersects || intersectionResults.intersectionDistance >= glm::length(tetMesh.verts
+                                    [line.y] - origin) - epsilon || intersectionResults.intersectionDistance < epsilon);
+                    }
+                }
+                */
+                constexpr double epsilon = 0.00001;
+                const double side1 = glm::dot(tetMesh.verts[tri.x] - facetMesh.verts[triangles[0].x], normal);
+                const double side2 = glm::dot(tetMesh.verts[tri.y] - facetMesh.verts[triangles[0].y], normal);
+                const double side3 = glm::dot(tetMesh.verts[tri.z] - facetMesh.verts[triangles[0].z], normal);
+                if (fabs(side1) > epsilon || fabs(side2) > epsilon || fabs(side3) > epsilon)
+                    cavities[glm::sign(side1 + side2 + side3) > 0].push_back(tri);
+            }
+        }
+
+        for (const std::vector<glm::uvec3> &cavity : cavities) {
+            unfinishedFaces.clear();
+            for (const glm::uvec3 tri : cavity) {
+                const Face face1 = {tri.x, tri.y, tri.z, false};
+                const Face face2 = {tri.x, tri.y, tri.z, true};
+                uint64_t seed = 0;
+                hashCombine(seed, face1.a, face1.b, face1.c, face1.reverseNormal);
+                unfinishedFaces[seed] = face1;
+                seed = 0;
+                hashCombine(seed, face2.a, face2.b, face2.c, face2.reverseNormal);
+                unfinishedFaces[seed] = face2;
+            }
+
+            for (auto it = unfinishedFaces.begin(); it != unfinishedFaces.end();) {
+                const Face &face = it->second;
+                const dvec3 &a = tetMesh.verts[face.a];
+                const dvec3 &b = tetMesh.verts[face.b];
+                const dvec3 &c = tetMesh.verts[face.c];
+                const dvec3 middle = (a + b + c) / 3.0;
+                dvec3 normal = glm::normalize(glm::cross(tetMesh.verts[face.b] - tetMesh.verts[face.a],
+                            tetMesh.verts[face.c] - tetMesh.verts[face.a]));
+                if (face.reverseNormal) normal *= -1.0;
+                double minDst = std::numeric_limits<double>::max();
+                size_t minIdx;
+                bool foundVert = false;
+                for (size_t j = 0; j < tetMesh.verts.size(); j++) {
+                    constexpr double epsilon = 0.00001;
+                    const dvec3 &d = tetMesh.verts[j];
+                    if (glm::dot(d - middle, normal) <= 0.0) continue;
+                    if (glm::distance(a, d) < epsilon || glm::distance(b, d) < epsilon || glm::distance(c, d) < epsilon) continue;
+                    const double det = glm::dot(2.0 * (b - a), glm::cross(c - a, d - a)); 
+                    const dvec3 circumCenter = (det > -epsilon && det < epsilon) ? a : a + (glm::dot(b - a, b - a) * glm::cross(c - a, d - a) + glm::dot(c - a, c - a) * glm::cross(d - a, b - a) + glm::dot(d - a, d - a) * glm::cross(b - a, c - a)) / det;
+                    const double dst = glm::distance(d, circumCenter);
+                    if (dst < minDst) {
+                        minDst = dst;
+                        minIdx = j;
+                        foundVert = true;
+                    }
+                }
+                if (foundVert) {
+                    assert(face.a != minIdx && face.b != minIdx && face.c != minIdx);
+                    std::array<Face, 6> faces = {Face{face.a, face.b, static_cast<uint32_t>(minIdx), false}, Face{face.b, face.c, static_cast<uint32_t>(minIdx), false}, Face{face.a, static_cast<uint32_t>(minIdx), face.c, false}};
+                    for (uint32_t i = 0; i < 3; i++) {
+                        faces[i + 3] = faces[i];
+                        faces[i + 3].reverseNormal = true;
+                    }
+                    for (const Face &tetFace : faces) {
+                        uint64_t seed = 0;
+                        const auto tetFaceIt = unfinishedFaces.find(seed);
+                        assert(tetFaceIt != it);
+                        if (tetFaceIt != unfinishedFaces.end()) unfinishedFaces.erase(tetFaceIt);
+                        else unfinishedFaces[seed] = tetFace;
+                    }
+                    tetMesh.tets.emplace_back(TetrahedronIndices{face.a, face.b, face.c, static_cast<uint32_t>(minIdx)});
+                }
+                it = unfinishedFaces.erase(it);
+            }
+        }
+    }
+}
+
 void deleteUnnecessaryTetrahedrons(TetrahedronMesh &tetMesh, const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
 {
     std::vector<uint32_t> tetIdxsToRemove;
@@ -453,38 +703,18 @@ void deleteUnnecessaryTetrahedrons(TetrahedronMesh &tetMesh, const vul::Scene &s
             + tetMesh.verts[tet.d]) / 3.0, (tetMesh.verts[tet.a] + tetMesh.verts[tet.c] + tetMesh.verts[tet.d]) / 3.0};
         for (dvec3 &ray : rays) {
             ray = glm::normalize(ray - centroid);
-            double minDst = std::numeric_limits<double>::max();
-            dvec3 closestTriangleNormal;
             bool foundIntersection = false;
-            for (size_t j = mesh.firstIndex; j < mesh.firstIndex + mesh.indexCount; j += 3) {
-                // Ray-triangle intersection code from
-                // https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm
-                constexpr double epsilon = std::numeric_limits<double>::epsilon();
-
+            double minDst = std::numeric_limits<double>::max();
+            dvec3 closestTriangleNormal{};
+            for (uint32_t j = mesh.firstIndex; j < mesh.firstIndex + mesh.indexCount; j += 3) {
                 const dvec3 a = scene.vertices[scene.indices[j] + mesh.vertexOffset];
                 const dvec3 b = scene.vertices[scene.indices[j + 1] + mesh.vertexOffset];
                 const dvec3 c = scene.vertices[scene.indices[j + 2] + mesh.vertexOffset];
-
-                const dvec3 edge1 = b - a;
-                const dvec3 edge2 = c - a;
-                const dvec3 rayCrossEdge2 = glm::cross(ray, edge2);
-                const double det = glm::dot(edge1, rayCrossEdge2);
-                if (det > -epsilon && det < epsilon) continue;
-
-                const double invDet = 1.0 / det;
-                const dvec3 s = centroid - a;
-                const double u = invDet * glm::dot(s, rayCrossEdge2);
-                if (u < 0.0 || u > 1.0) continue;
-
-                const dvec3 sCrossEdge1 = glm::cross(s, edge1);
-                const double v = invDet * glm::dot(ray, sCrossEdge1);
-                if (v < 0.0 || u + v > 1.0) continue;
-
-                const double dst = invDet * glm::dot(edge2, sCrossEdge1);
-                if (dst > epsilon && dst < minDst) {
-                    minDst = dst;
-                    closestTriangleNormal = glm::normalize(glm::cross(b - a, c - a));
+                IntersectionResults intersectionResults = rayTriangleIntersection(ray, centroid, a, b, c);
+                if (intersectionResults.intersects && intersectionResults.intersectionDistance < minDst) {
                     foundIntersection = true;
+                    minDst = intersectionResults.intersectionDistance;
+                    closestTriangleNormal = glm::normalize(glm::cross(b - a, c - a));
                 }
             }
             if (!foundIntersection || glm::dot(ray, closestTriangleNormal) <= 0.0) {
@@ -498,15 +728,15 @@ void deleteUnnecessaryTetrahedrons(TetrahedronMesh &tetMesh, const vul::Scene &s
 
 TetralizationResults tetralizeMesh(const vul::Scene &scene, const vul::GltfLoader::GltfPrimMesh &mesh)
 {
-    const FacetMesh origFacetMesh = getFacetMeshFromGltfMesh(scene, mesh);
-    FacetMesh facetMesh = origFacetMesh;
-    TetrahedronMesh convexTetMesh = createConvexHullTetrahedralMesh(facetMesh.verts);
-    edgeProtectTetrahedronMesh(convexTetMesh, facetMesh);
-    deleteUnnecessaryTetrahedrons(convexTetMesh, scene, mesh);
+    FacetMesh facetMesh = getFacetMeshFromGltfMesh(scene, mesh);
+    TetrahedronMesh tetMesh = createConvexHullTetrahedralMesh(facetMesh.verts);
+    edgeProtectTetrahedronMesh(tetMesh, facetMesh);
+    recoverFacets(tetMesh, facetMesh);
+    deleteUnnecessaryTetrahedrons(tetMesh, scene, mesh);
 
-    //std::cout << countMissingSegments(facetMesh, convexTetMesh) << " segments out of " << facetMesh.segmentIndices.size() << " are missing from tetrahedralization\n"; 
-    //std::cout << countNonDelaunayTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " break the delaunay condition\n";
-    //std::cout << countFlatTetrahedrons(convexTetMesh) << " tetrahedrons out of " << convexTetMesh.tets.size() << " are flat\n";
+    std::cout << countMissingSegments(facetMesh, tetMesh) << " segments out of " << facetMesh.segmentIndices.size() << " are missing from tetrahedralization\n"; 
+    std::cout << countNonDelaunayTetrahedrons(tetMesh) << " tetrahedrons out of " << tetMesh.tets.size() << " break the delaunay condition\n";
+    std::cout << countFlatTetrahedrons(tetMesh) << " tetrahedrons out of " << tetMesh.tets.size() << " are flat\n";
 
-    return TetralizationResults{convexTetMesh, facetMesh};
+    return TetralizationResults{tetMesh, facetMesh};
 }
