@@ -549,7 +549,9 @@ void recoverFacets(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
     std::vector<glm::uvec3> removedTriangles;
     std::vector<glm::uvec3> uniqueRemovedTriangles;
     std::vector<std::vector<glm::uvec3>> cavities;
+    std::vector<uint32_t> cavityIndices;
     std::unordered_map<uint64_t, Face> unfinishedFaces;
+    std::unordered_set<uint64_t> finishedFaces;
     for (const std::vector<glm::uvec3> &triangles : facetMesh.facetTriangles) {
         assert(triangles.size() > 0);
         removedTets.clear();
@@ -573,6 +575,7 @@ void recoverFacets(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
                         break;
                     }
                 }
+                if (intersects) break;
             }
             return intersects;
         }), tetMesh.tets.end());
@@ -632,20 +635,34 @@ void recoverFacets(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
         }
 
         for (const std::vector<glm::uvec3> &cavity : cavities) {
-            unfinishedFaces.clear();
-            for (const glm::uvec3 tri : cavity) {
-                const Face face1 = {tri.x, tri.y, tri.z, false};
-                const Face face2 = {tri.x, tri.y, tri.z, true};
-                uint64_t seed = 0;
-                hashCombine(seed, face1.a, face1.b, face1.c, face1.reverseNormal);
-                unfinishedFaces[seed] = face1;
-                seed = 0;
-                hashCombine(seed, face2.a, face2.b, face2.c, face2.reverseNormal);
-                unfinishedFaces[seed] = face2;
+            cavityIndices.clear();
+            for (const glm::uvec3 &tri : cavity) {
+                if (std::find(cavityIndices.begin(), cavityIndices.end(), tri.x) == cavityIndices.end()) cavityIndices.push_back(tri.x);
+                if (std::find(cavityIndices.begin(), cavityIndices.end(), tri.y) == cavityIndices.end()) cavityIndices.push_back(tri.y);
+                if (std::find(cavityIndices.begin(), cavityIndices.end(), tri.z) == cavityIndices.end()) cavityIndices.push_back(tri.z);
             }
 
-            for (auto it = unfinishedFaces.begin(); it != unfinishedFaces.end();) {
-                const Face &face = it->second;
+            unfinishedFaces.clear();
+            for (const glm::uvec3 tri : cavity) {
+                Face face = {tri.x, tri.y, tri.z, false};
+                if (face.a > face.b) std::swap(face.a, face.b);
+                if (face.b > face.c) std::swap(face.b, face.c);
+                if (face.a > face.b) std::swap(face.a, face.b);
+                uint64_t seed = 0;
+                hashCombine(seed, face.a, face.b, face.c, face.reverseNormal);
+                unfinishedFaces[seed] = face;
+                seed = 0;
+                face.reverseNormal = true;
+                hashCombine(seed, face.a, face.b, face.c, face.reverseNormal);
+                unfinishedFaces[seed] = face;
+            }
+
+            finishedFaces.clear();
+            while (!unfinishedFaces.empty()) {
+                const Face face = unfinishedFaces.begin()->second;
+                finishedFaces.insert(unfinishedFaces.begin()->first);
+                unfinishedFaces.erase(unfinishedFaces.begin());
+
                 const dvec3 &a = tetMesh.verts[face.a];
                 const dvec3 &b = tetMesh.verts[face.b];
                 const dvec3 &c = tetMesh.verts[face.c];
@@ -656,11 +673,22 @@ void recoverFacets(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
                 double minDst = std::numeric_limits<double>::max();
                 size_t minIdx;
                 bool foundVert = false;
-                for (size_t j = 0; j < tetMesh.verts.size(); j++) {
+                for (uint32_t j : cavityIndices) {
                     constexpr double epsilon = 0.00001;
                     const dvec3 &d = tetMesh.verts[j];
                     if (glm::dot(d - middle, normal) <= 0.0) continue;
                     if (glm::distance(a, d) < epsilon || glm::distance(b, d) < epsilon || glm::distance(c, d) < epsilon) continue;
+                    /*
+                    bool visible = true;
+                    for (const glm::uvec3 &tri : cavity) {
+                        IntersectionResults results = rayTriangleIntersection(glm::normalize(d - middle), middle, tetMesh.verts[tri.x], tetMesh.verts[tri.y], tetMesh.verts[tri.z]);
+                        if (results.intersects) {
+                            visible = false;
+                            break;
+                        }
+                    }
+                    if (!visible) continue;
+                    */
                     const double det = glm::dot(2.0 * (b - a), glm::cross(c - a, d - a)); 
                     const dvec3 circumCenter = (det > -epsilon && det < epsilon) ? a : a + (glm::dot(b - a, b - a) * glm::cross(c - a, d - a) + glm::dot(c - a, c - a) * glm::cross(d - a, b - a) + glm::dot(d - a, d - a) * glm::cross(b - a, c - a)) / det;
                     const double dst = glm::distance(d, circumCenter);
@@ -672,21 +700,31 @@ void recoverFacets(TetrahedronMesh &tetMesh, FacetMesh &facetMesh)
                 }
                 if (foundVert) {
                     assert(face.a != minIdx && face.b != minIdx && face.c != minIdx);
-                    std::array<Face, 6> faces = {Face{face.a, face.b, static_cast<uint32_t>(minIdx), false}, Face{face.b, face.c, static_cast<uint32_t>(minIdx), false}, Face{face.a, static_cast<uint32_t>(minIdx), face.c, false}};
-                    for (uint32_t i = 0; i < 3; i++) {
-                        faces[i + 3] = faces[i];
-                        faces[i + 3].reverseNormal = true;
-                    }
-                    for (const Face &tetFace : faces) {
+                    const dvec3 centroid = (tetMesh.verts[face.a] + tetMesh.verts[face.b] + tetMesh.verts[face.c] + tetMesh.verts[minIdx]) / 4.0;
+                    std::array<Face, 3> faces = {Face{face.a, face.b, static_cast<uint32_t>(minIdx), false}, Face{face.b, face.c, static_cast<uint32_t>(minIdx), false}, Face{face.a, static_cast<uint32_t>(minIdx), face.c, false}};
+                    for (Face &tetFace : faces) {
+                        if (tetFace.a > tetFace.b) std::swap(tetFace.a, tetFace.b);
+                        if (tetFace.b > tetFace.c) std::swap(tetFace.b, tetFace.c);
+                        if (tetFace.a > tetFace.b) std::swap(tetFace.a, tetFace.b);
+                        const dvec3 center = (tetMesh.verts[tetFace.a] + tetMesh.verts[tetFace.b] + tetMesh.verts[tetFace.c]) / 3.0;
+                        if (glm::dot(glm::normalize(centroid - center), normal) > 0.0) tetFace.reverseNormal = !face.reverseNormal;
                         uint64_t seed = 0;
-                        const auto tetFaceIt = unfinishedFaces.find(seed);
-                        assert(tetFaceIt != it);
-                        if (tetFaceIt != unfinishedFaces.end()) unfinishedFaces.erase(tetFaceIt);
+                        hashCombine(seed, tetFace.a, tetFace.b, tetFace.c, tetFace.reverseNormal);
+                        const bool isFinished1 = finishedFaces.contains(seed);
+                        const auto tetFaceIt1 = unfinishedFaces.find(seed);
+                        seed = 0;
+                        hashCombine(seed, tetFace.a, tetFace.b, tetFace.c, !tetFace.reverseNormal);
+                        const bool isFinished2 = finishedFaces.contains(seed);
+                        const auto tetFaceIt2 = unfinishedFaces.find(seed);
+                        finishedFaces.insert(seed);
+                        if (tetFaceIt1 != unfinishedFaces.end() || tetFaceIt2 != unfinishedFaces.end() || isFinished1 || isFinished2) {
+                            if (tetFaceIt1 != unfinishedFaces.end()) unfinishedFaces.erase(tetFaceIt1);
+                            if (tetFaceIt2 != unfinishedFaces.end()) unfinishedFaces.erase(tetFaceIt2);
+                        }
                         else unfinishedFaces[seed] = tetFace;
                     }
                     tetMesh.tets.emplace_back(TetrahedronIndices{face.a, face.b, face.c, static_cast<uint32_t>(minIdx)});
                 }
-                it = unfinishedFaces.erase(it);
             }
         }
     }
